@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <fstream>
 #include <vector>
+#include <algorithm>
 
 #pragma pack(push,1)
 struct TGAHeader {
@@ -46,4 +47,21 @@ private:
     std::uint8_t bpp = 0;
     std::vector<std::uint8_t> data = {};
 };
+
+inline TGAColor operator*(float f, const TGAColor& c) {
+    TGAColor res = c;
+    for (int i = 0; i < 4; ++i) {
+        res[i] = static_cast<std::uint8_t>(std::clamp(f * c[i], 0.0f, 255.0f));
+    }
+    return res;
+}
+
+inline TGAColor operator+(const TGAColor& a, const TGAColor& b) {
+    TGAColor res;
+    for (int i = 0; i < 4; ++i) {
+        int sum = a[i] + b[i];
+        res[i] = static_cast<std::uint8_t>(std::clamp(sum, 0, 255));
+    }
+    return res;
+}
 
