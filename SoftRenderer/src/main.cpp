@@ -46,34 +46,6 @@ void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color)
 	}
 }
 
-////Scanline rendering
-//void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
-//	// sort the vertices, a,b,c in ascending y order (bubblesort yay!)
-//	if (ay > by) { std::swap(ax, bx); std::swap(ay, by); }
-//	if (ay > cy) { std::swap(ax, cx); std::swap(ay, cy); }
-//	if (by > cy) { std::swap(bx, cx); std::swap(by, cy); }
-//	int height = cy - ay;
-//
-//	if (ay != by) {
-//		int segment_height = by - ay;
-//		for (int y = ay; y <= by; ++y) {
-//			int x1 = ax + (cx - ax) * (y - ay) / height;
-//			int x2 = ax + (bx - ax) * (y - ay) / segment_height;
-//			for (int x = std::min(x1, x2); x < std::max(x1, x2); ++x) { // draw a horizontal line
-//				framebuffer.set(x, y, color);
-//			}
-//		}
-//	}
-//	if (by != cy) { // if the upper half is not degenerate
-//		int segment_height = cy - by;
-//		for (int y = by; y <= cy; y++) { // sweep the horizontal line from by to cy
-//			int x1 = ax + ((cx - ax) * (y - ay)) / height;
-//			int x2 = bx + ((cx - bx) * (y - by)) / segment_height;
-//			for (int x = std::min(x1, x2); x < std::max(x1, x2); x++)  // draw a horizontal line
-//				framebuffer.set(x, y, color);
-//		}
-//	}
-//}
 
 double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
 	return .5 * ((by-ay) * (ax + bx) + (ay - cy) * (ax + cx) + (cy - by) * (cx + bx));
@@ -99,7 +71,17 @@ void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuf
 	}
 }
 
-void triangle_blending_color(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor acolor,TGAColor bcolor,TGAColor ccolor) {
+
+std::tuple<int, int, int> project(Vec3f& v, const int width, const int height) {
+	return
+	{
+		(v.x + 1.) * width / 2.,
+		(v.y + 1.) * height / 2.,
+		(v.z + 1.) * 255. / 2
+	};
+}
+
+void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage& framebuffer, TGAImage& zbuffer,TGAColor color) {
 	// bounding box for the triangle
 	int bbminx = std::min(std::min(ax, bx), cx);
 	int bbminy = std::min(std::min(ay, by), cy);
@@ -114,42 +96,14 @@ void triangle_blending_color(int ax, int ay, int bx, int by, int cx, int cy, TGA
 			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
 			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
 			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
-			TGAColor color = alpha * acolor + beta * bcolor + gamma * ccolor;
+			unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+			if (z <= zbuffer.get(x, y)[0]) continue;
+			zbuffer.set(x, y, {z});
 			framebuffer.set(x, y, color);
-		}
-	}
-}
-
-
-void triangle_wireframe(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
-	// bounding box for the triangle
-	int bbminx = std::min(std::min(ax, bx), cx);
-	int bbminy = std::min(std::min(ay, by), cy);
-	int bbmaxx = std::max(std::max(ax, bx), cx);
-	int bbmaxy = std::max(std::max(ay, by), cy);
-	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-	if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
-#pragma omp parallel for
-	for (int x = bbminx; x <= bbmaxx; ++x) {
-		for (int y = bbminy; y <= bbmaxy; y++) {
-			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
-			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
-			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
-			/*if ((alpha == 0 && beta * gamma != 0) || (beta == 0 && alpha * gamma != 0) || (gamma == 0 && alpha * beta != 0)) {
-				framebuffer.set(x, y, color);
-			}*/
-			double threhold = 0.05;
-			if (alpha < threhold|| beta < threhold || gamma < threhold) {
-				framebuffer.set(x, y, color);
-			}
-			
 			
 		}
 	}
 }
-
-
 
 
 int main(int argc, char **argv) {
@@ -157,6 +111,7 @@ int main(int argc, char **argv) {
 	constexpr int height = 1600;
 	
 	TGAImage framebuffer(width, height, TGAImage::RGB);
+	TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
 
 	//triangle_wireframe(7, 45, 45, 60, 35, 100, framebuffer, red);
 
@@ -175,22 +130,19 @@ int main(int argc, char **argv) {
 		Vec3f v1 = model.vert(face[1]);
 		Vec3f v2 = model.vert(face[2]);
 
-		int x0 = (v0.x + 1.) * width / 2.;
-		int y0 = (v0.y + 1.) * height / 2.;
-		int x1 = (v1.x + 1.) * width / 2.;
-		int y1 = (v1.y + 1.) * height / 2.;
-		int x2 = (v2.x + 1.) * width / 2.;
-		int y2 = (v2.y + 1.) * height / 2.;
+		auto [x0, y0, z0] = project(v0, width, height);
+		auto [x1, y1, z1] = project(v1, width, height);
+		auto [x2, y2, z2] = project(v2, width, height);
+		
 		TGAColor rnd;
 		for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
-		triangle_wireframe(x0, y0, x1, y1, x2, y2, framebuffer, rnd);
-		//draw triangles
-		//triangle(x0, y0, x1, y1, x2, y2, framebuffer, rnd);
-		//triangle_blending_color(x0, y0, x1, y1, x2, y2, framebuffer,red, green, blue);
-		}
+		
+		triangle(x0, y0, z0,x1, y1,z1, x2, y2,z2, framebuffer,zbuffer, rnd);
+	}
 
 	
 	framebuffer.write_tga_file("framebuffer.tga");
+	zbuffer.write_tga_file("zbuffer.tga");
 
 	return 0;
 }
