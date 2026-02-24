@@ -79,25 +79,25 @@ double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
 	return .5 * ((by-ay) * (ax + bx) + (ay - cy) * (ax + cx) + (cy - by) * (cx + bx));
 }
 
-//void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
-//	// bounding box for the triangle
-//	int bbminx = std::min(std::min(ax, bx), cx); 
-//	int bbminy = std::min(std::min(ay, by), cy);
-//	int bbmaxx = std::max(std::max(ax, bx), cx);
-//	int bbmaxy = std::max(std::max(ay, by), cy);
-//	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-//	if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
-//#pragma omp parallel for
-//	for (int x = bbminx; x <= bbmaxx; ++x) {
-//		for (int y = bbminy; y <= bbmaxy; y++) {
-//			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-//			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
-//			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
-//			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
-//			framebuffer.set(x, y, color);
-//		}
-//	}
-//}
+void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
+	// bounding box for the triangle
+	int bbminx = std::min(std::min(ax, bx), cx); 
+	int bbminy = std::min(std::min(ay, by), cy);
+	int bbmaxx = std::max(std::max(ax, bx), cx);
+	int bbmaxy = std::max(std::max(ay, by), cy);
+	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+	if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
+#pragma omp parallel for
+	for (int x = bbminx; x <= bbmaxx; ++x) {
+		for (int y = bbminy; y <= bbmaxy; y++) {
+			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
+			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
+			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
+			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
+			framebuffer.set(x, y, color);
+		}
+	}
+}
 
 void triangle_blending_color(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor acolor,TGAColor bcolor,TGAColor ccolor) {
 	// bounding box for the triangle
@@ -121,41 +121,73 @@ void triangle_blending_color(int ax, int ay, int bx, int by, int cx, int cy, TGA
 }
 
 
+void triangle_wireframe(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
+	// bounding box for the triangle
+	int bbminx = std::min(std::min(ax, bx), cx);
+	int bbminy = std::min(std::min(ay, by), cy);
+	int bbmaxx = std::max(std::max(ax, bx), cx);
+	int bbmaxy = std::max(std::max(ay, by), cy);
+	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+	if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
+#pragma omp parallel for
+	for (int x = bbminx; x <= bbmaxx; ++x) {
+		for (int y = bbminy; y <= bbmaxy; y++) {
+			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
+			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
+			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
+			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
+			/*if ((alpha == 0 && beta * gamma != 0) || (beta == 0 && alpha * gamma != 0) || (gamma == 0 && alpha * beta != 0)) {
+				framebuffer.set(x, y, color);
+			}*/
+			double threhold = 0.05;
+			if (alpha < threhold|| beta < threhold || gamma < threhold) {
+				framebuffer.set(x, y, color);
+			}
+			
+			
+		}
+	}
+}
+
 
 
 
 int main(int argc, char **argv) {
-	constexpr int width = 200;
-	constexpr int height = 200;
+	constexpr int width = 1600;
+	constexpr int height = 1600;
 	
 	TGAImage framebuffer(width, height, TGAImage::RGB);
 
-	triangle_blending_color(7, 45,45, 60 ,35, 100,  framebuffer, red,green,blue);
+	//triangle_wireframe(7, 45, 45, 60, 35, 100, framebuffer, red);
+
+	//triangle_blending_color(7, 45,45, 60 ,35, 100,  framebuffer, red,green,blue);
+
 	/*triangle(7, 45, 35, 100, 45, 60, framebuffer, red);
 	triangle(120, 35, 90, 5, 45, 110, framebuffer, white);
 	triangle(115, 83, 80, 90, 85, 120, framebuffer, green);*/
 
 	std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
-	//Model model(filename.c_str());
-	//for (int i = 0; i < model.nfaces(); i++) {
-	//	std::vector<int> face = model.face(i);
-	//	
-	//	Vec3f v0 = model.vert(face[0]);
-	//	Vec3f v1 = model.vert(face[1]);
-	//	Vec3f v2 = model.vert(face[2]);
+	Model model(filename.c_str());
+	for (int i = 0; i < model.nfaces(); i++) {
+		std::vector<int> face = model.face(i);
+		
+		Vec3f v0 = model.vert(face[0]);
+		Vec3f v1 = model.vert(face[1]);
+		Vec3f v2 = model.vert(face[2]);
 
-	//	int x0 = (v0.x + 1.) * width / 2.;
-	//	int y0 = (v0.y + 1.) * height / 2.;
-	//	int x1 = (v1.x + 1.) * width / 2.;
-	//	int y1 = (v1.y + 1.) * height / 2.;
-	//	int x2 = (v2.x + 1.) * width / 2.;
-	//	int y2 = (v2.y + 1.) * height / 2.;
-	//	TGAColor rnd;
-	//	//for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
-	//	//draw triangles
-	//	//triangle(x0, y0, x1, y1, x2, y2, framebuffer, rnd);
-	//	triangle_blending_color(x0, y0, x1, y1, x2, y2, framebuffer,red, green, blue);
-	//	}
+		int x0 = (v0.x + 1.) * width / 2.;
+		int y0 = (v0.y + 1.) * height / 2.;
+		int x1 = (v1.x + 1.) * width / 2.;
+		int y1 = (v1.y + 1.) * height / 2.;
+		int x2 = (v2.x + 1.) * width / 2.;
+		int y2 = (v2.y + 1.) * height / 2.;
+		TGAColor rnd;
+		for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
+		triangle_wireframe(x0, y0, x1, y1, x2, y2, framebuffer, rnd);
+		//draw triangles
+		//triangle(x0, y0, x1, y1, x2, y2, framebuffer, rnd);
+		//triangle_blending_color(x0, y0, x1, y1, x2, y2, framebuffer,red, green, blue);
+		}
 
 	
 	framebuffer.write_tga_file("framebuffer.tga");
