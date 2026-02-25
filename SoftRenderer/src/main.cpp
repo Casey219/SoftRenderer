@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
 	triangle(120, 35, 90, 5, 45, 110, framebuffer, white);
 	triangle(115, 83, 80, 90, 85, 120, framebuffer, green);*/
 
-	std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
+	/*std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
 	Model model(filename.c_str());
 	for (int i = 0; i < model.nfaces(); i++) {
 		std::vector<int> face = model.face(i);
@@ -142,7 +142,34 @@ int main(int argc, char **argv) {
 
 	
 	framebuffer.write_tga_file("framebuffer.tga");
-	zbuffer.write_tga_file("zbuffer.tga");
+	zbuffer.write_tga_file("zbuffer.tga");*/
+
+
+	Matrix A(2, 2);
+	A[0][0] = 1.0f; A[0][1] = 2.0f;
+	A[1][0] = 3.0f; A[1][1] = 4.0f;
+
+	Matrix B(2, 2);
+	B[0][0] = 1.0f; B[0][1] = 0.0f;
+	B[1][0] = 0.0f; B[1][1] = 1.0f;
+
+	Matrix C = A + B;
+	std::cout << C << std::endl;
+
+	Matrix m3(3,3);
+	// 初始化行 (根据你的 vec 实现方式调整)
+	m3[0] = { 1, 2, 3 };
+	m3[1] = { 0, 1, 4 };
+	m3[2] = { 5, 6, 0 };
+	Matrix result = m3.inverse();
+
+	Matrix m4(4, 4);
+	m4[0] = { 1, 1, 0, 0 };
+	m4[1] = { 0, 1, 1, 0 };
+	m4[2] = { 0, 0, 1, 1 };
+	m4[3] = { 0, 0, 0, 1 };
+	Matrix result2 = m4.inverse();
+	std::cout <<result2 ;
 
 	return 0;
 }

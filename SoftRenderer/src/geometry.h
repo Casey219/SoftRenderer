@@ -1,6 +1,8 @@
 #pragma once
 #include <cmath>
 #include <ostream>
+#include <cassert>
+#include<vector>
 
 template <typename t> 
 struct Vec2 {
@@ -53,5 +55,33 @@ typedef Vec3<float> Vec3f;
 typedef Vec3<int>   Vec3i;
 
 
+const int DEFAULT_ALLOC = 4;
 
+class Matrix {
+	std::vector<std::vector<float>> m;
+	int rows, cols;
+public:
+
+	Matrix(int r = DEFAULT_ALLOC, int c = DEFAULT_ALLOC) : rows(r), cols(c), m(std::vector<std::vector<float> >(r, std::vector<float>(c, 0.f)))
+	{
+		if (r < 0 || c < 0) {
+			throw std::invalid_argument("Matrix dimensions must be non-negative.");
+		}
+		
+	};
+	inline int nrows() { return rows; }
+	inline int ncols() { return cols; }
+
+	static Matrix identity(int dimensions);
+	std::vector<float>& operator[](const int i) {
+		assert(i >= 0 && i < rows);
+		return m[i];
+	}
+	Matrix operator+(const Matrix& a) const;
+	Matrix operator*(const Matrix& a) const;
+	Matrix transpose();
+	Matrix inverse();
+
+	friend std::ostream& operator<<(std::ostream& s, Matrix& m);
+};
 
