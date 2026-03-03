@@ -4,6 +4,7 @@
 #include <tuple> 
 #include "geometry.h"
 #include "model.h"
+#include<cmath>
 
 
 
@@ -13,6 +14,7 @@ constexpr TGAColor red = { 0,   0, 255, 255 };
 constexpr TGAColor blue = { 255, 128,  64, 255 };
 constexpr TGAColor yellow = { 0, 200, 255, 255 };
 
+const double PI = acos(-1.0);
 
 //time≈2.11
 void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color) {
@@ -125,10 +127,22 @@ Matrix lookat(Vec3f eye, Vec3f center, Vec3f up) {
 	return Minv * Tr;
 }
 
-Matrix projection(const float f) {
-	Matrix p = Matrix::identity(4);
-	p[3][2] = -1/f; // f 是相机到原点的距离
-	return p;
+//Matrix projection(const float f) {
+//	Matrix p = Matrix::identity(4);
+//	p[3][2] = -1/f; // f 是相机到原点的距离
+//	return p;
+//}
+
+Matrix projection(float fov_deg, float aspect, float znear, float zfar) {
+	Matrix m = Matrix::identity(4);
+	float tanHalfFovy = tan(fov_deg * PI / 360.0f);
+	m[0][0] = 1.0f / (aspect * tanHalfFovy);
+	m[1][1] = 1.0f / (tanHalfFovy);
+	m[2][2] = -(zfar + znear) / (zfar - znear);
+	m[2][3] = -(2.0f * zfar * znear) / (zfar - znear);
+	m[3][2] = -1.0f;
+	m[3][3] = 0.0f;
+	return m;
 }
 
 Matrix viewport(int x, int y, int w, int h) {
@@ -172,13 +186,14 @@ int main(int argc, char **argv) {
 	std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
 	Model model(filename.c_str());
 
-	Vec3f camera_position(2.0f, 2.0f, 3.0f);
-	//Vec3f camera_position(1.0f, 3.0f, 0.0f);
+	Vec3f camera_position(0.0f, 0.0f, 1.0f);
+	//Vec3f camera_position(0.0f, 3.0f, 0.0f);
 	Vec3f center(0.0f, 0.0f, 0.0f);
 	Vec3f up(0.0f, 1.0f, 0.0f);
 
-
-	Matrix MVP = projection((camera_position-center).norm())*lookat(camera_position, center, up);
+	Matrix Projection = projection(45.0f,width/height,0.1f,1000.0f);
+	//Matrix Projection = projection((camera_position - center).norm());
+	Matrix MVP = Projection*lookat(camera_position, center, up);
 	Matrix Viewport = viewport(0, 0, width, height);
 	for (int i = 0; i < model.nfaces(); i++) {
 		std::vector<int> face = model.face(i);
@@ -187,11 +202,13 @@ int main(int argc, char **argv) {
 		Vec3f v1 = model.vert(face[1]);
 		Vec3f v2 = model.vert(face[2]);
 
-		
+		/*Matrix tmp = MVP * v2m(v0);
+		std::cout << "W component: " << tmp[3][0] << std::endl;*/
 
 		Vec3f screen_v0 = m2v(Viewport * MVP * v2m(v0));
 		Vec3f screen_v1 = m2v(Viewport * MVP * v2m(v1));
 		Vec3f screen_v2 = m2v(Viewport * MVP * v2m(v2));
+
 
 		auto [x0, y0, z0] = getXYZ(screen_v0);
 		auto [x1, y1, z1] = getXYZ(screen_v1);
