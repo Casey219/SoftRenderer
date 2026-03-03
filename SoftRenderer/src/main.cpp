@@ -105,6 +105,62 @@ void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, in
 	}
 }
 
+Matrix lookat(Vec3f eye, Vec3f center, Vec3f up) {
+	Vec3f z = (eye - center).normalize(); 
+	Vec3f x = (up ^ z).normalize();      
+	Vec3f y = (z ^ x).normalize();      
+
+	Matrix Minv = Matrix::identity(4);
+	Matrix Tr = Matrix::identity(4);
+
+	
+	for (int i = 0; i < 3; i++) {
+		Minv[0][i] = x.raw[i];
+		Minv[1][i] = y.raw[i];
+		Minv[2][i] = z.raw[i];
+		
+		Tr[i][3] = -eye.raw[i];
+	}
+
+	return Minv * Tr;
+}
+
+Matrix projection(const float f) {
+	Matrix p = Matrix::identity(4);
+	p[3][2] = -1/f; // f 是相机到原点的距离
+	return p;
+}
+
+Matrix viewport(int x, int y, int w, int h) {
+	Matrix m = Matrix::identity(4);
+	m[0][3] = x + w / 2.f;
+	m[1][3] = y + h / 2.f;
+	m[2][3] = 255.f / 2.f;
+
+	m[0][0] = w / 2.f;
+	m[1][1] = h / 2.f;
+	m[2][2] = 255.f / 2.f;
+	return m;
+}
+
+Matrix v2m(Vec3f v) {
+	Matrix m(4, 1);
+	m[0][0] = v.x;
+	m[1][0] = v.y;
+	m[2][0] = v.z;
+	m[3][0] = 1.f;
+	return m;
+}
+
+// 辅助工具：4x1 矩阵转 Vec3f (包含齐次除法)
+Vec3f m2v(Matrix m) {
+	return Vec3f(m[0][0] / m[3][0], m[1][0] / m[3][0], m[2][0] / m[3][0]);
+}
+
+std::tuple<int, int, int> getXYZ(Vec3f& v) {
+	return { v.x,v.y,v.z };
+}
+
 
 int main(int argc, char **argv) {
 	constexpr int width = 1600;
@@ -113,16 +169,17 @@ int main(int argc, char **argv) {
 	TGAImage framebuffer(width, height, TGAImage::RGB);
 	TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
 
-	//triangle_wireframe(7, 45, 45, 60, 35, 100, framebuffer, red);
-
-	//triangle_blending_color(7, 45,45, 60 ,35, 100,  framebuffer, red,green,blue);
-
-	/*triangle(7, 45, 35, 100, 45, 60, framebuffer, red);
-	triangle(120, 35, 90, 5, 45, 110, framebuffer, white);
-	triangle(115, 83, 80, 90, 85, 120, framebuffer, green);*/
-
-	/*std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
+	std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
 	Model model(filename.c_str());
+
+	Vec3f camera_position(2.0f, 2.0f, 3.0f);
+	//Vec3f camera_position(1.0f, 3.0f, 0.0f);
+	Vec3f center(0.0f, 0.0f, 0.0f);
+	Vec3f up(0.0f, 1.0f, 0.0f);
+
+
+	Matrix MVP = projection((camera_position-center).norm())*lookat(camera_position, center, up);
+	Matrix Viewport = viewport(0, 0, width, height);
 	for (int i = 0; i < model.nfaces(); i++) {
 		std::vector<int> face = model.face(i);
 		
@@ -130,46 +187,30 @@ int main(int argc, char **argv) {
 		Vec3f v1 = model.vert(face[1]);
 		Vec3f v2 = model.vert(face[2]);
 
-		auto [x0, y0, z0] = project(v0, width, height);
-		auto [x1, y1, z1] = project(v1, width, height);
-		auto [x2, y2, z2] = project(v2, width, height);
+		
+
+		Vec3f screen_v0 = m2v(Viewport * MVP * v2m(v0));
+		Vec3f screen_v1 = m2v(Viewport * MVP * v2m(v1));
+		Vec3f screen_v2 = m2v(Viewport * MVP * v2m(v2));
+
+		auto [x0, y0, z0] = getXYZ(screen_v0);
+		auto [x1, y1, z1] = getXYZ(screen_v1);
+		auto [x2, y2, z2] = getXYZ(screen_v2);
+		
 		
 		TGAColor rnd;
 		for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
 		
+		//triangle(screen_v0.x, screen_v0.x, screen_v0.x,x1, y1,z1, x2, y2,z2, framebuffer,zbuffer, rnd);
 		triangle(x0, y0, z0,x1, y1,z1, x2, y2,z2, framebuffer,zbuffer, rnd);
 	}
 
 	
 	framebuffer.write_tga_file("framebuffer.tga");
-	zbuffer.write_tga_file("zbuffer.tga");*/
+	zbuffer.write_tga_file("zbuffer.tga");
 
 
-	Matrix A(2, 2);
-	A[0][0] = 1.0f; A[0][1] = 2.0f;
-	A[1][0] = 3.0f; A[1][1] = 4.0f;
-
-	Matrix B(2, 2);
-	B[0][0] = 1.0f; B[0][1] = 0.0f;
-	B[1][0] = 0.0f; B[1][1] = 1.0f;
-
-	Matrix C = A + B;
-	std::cout << C << std::endl;
-
-	Matrix m3(3,3);
-	// 初始化行 (根据你的 vec 实现方式调整)
-	m3[0] = { 1, 2, 3 };
-	m3[1] = { 0, 1, 4 };
-	m3[2] = { 5, 6, 0 };
-	Matrix result = m3.inverse();
-
-	Matrix m4(4, 4);
-	m4[0] = { 1, 1, 0, 0 };
-	m4[1] = { 0, 1, 1, 0 };
-	m4[2] = { 0, 0, 1, 1 };
-	m4[3] = { 0, 0, 0, 1 };
-	Matrix result2 = m4.inverse();
-	std::cout <<result2 ;
+	
 
 	return 0;
 }
