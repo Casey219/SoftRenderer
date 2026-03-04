@@ -42,6 +42,9 @@ struct Vec3 {
 
 	float norm () const { return std::sqrt(x*x+y*y+z*z); }
 	Vec3<t> & normalize(t l=1) { *this = (*this)*(l/norm()); return *this; }
+	std::tuple<t, t, t> getXYZ() {
+		return { x,y,z };
+	}
 
 	friend std::ostream& operator<<(std::ostream& s, Vec3<t>& v) {
 			return s << "(" << v.x << ", " << v.y << ", " << v.z << ")\n";
@@ -85,3 +88,7 @@ public:
 	friend std::ostream& operator<<(std::ostream& s, Matrix& m);
 };
 
+Matrix v2m(Vec3f v);
+
+// 辅助工具：4x1 矩阵转 Vec3f (包含齐次除法)
+Vec3f m2v(Matrix m);
