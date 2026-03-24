@@ -1,6 +1,9 @@
 #include "my_gl.h"
 
 const double PI = acos(-1.0);
+const int depth = 1;
+
+std::vector<double> zbuffer;               // depth buffer
 
 //time¡Ö2.11
 void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color) {
@@ -36,7 +39,8 @@ void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color)
 
 
 double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
-	return .5 * ((by - ay) * (ax + bx) + (ay - cy) * (ax + cx) + (cy - by) * (cx + bx));
+	//return .5 * ((by - ay) * (ax + bx) + (ay - cy) * (ax + cx) + (cy - by) * (cx + bx));
+	return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 }
 
 void triangle2D(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
@@ -46,7 +50,8 @@ void triangle2D(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& frameb
 	int bbmaxx = std::max(std::max(ax, bx), cx);
 	int bbmaxy = std::max(std::max(ay, by), cy);
 	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-	if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
+	if (total_area <=0) return; 
+	//if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
 #pragma omp parallel for
 	for (int x = bbminx; x <= bbmaxx; ++x) {
 		for (int y = bbminy; y <= bbmaxy; y++) {
@@ -59,38 +64,59 @@ void triangle2D(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& frameb
 	}
 }
 
+void init_zbuffer(int width, int height) {
+	zbuffer = std::vector(width * height, 1.0);
+	//zbuffer = std::vector(width * height, std::numeric_limits<double>::infinity());
+}
 
 
-void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage& framebuffer, TGAImage& zbuffer, TGAColor color) {
+void triangle(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, TGAImage& framebuffer, TGAColor color) {
+//void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage& framebuffer, TGAColor color) {
 	// bounding box for the triangle
-	int bbminx = std::min(std::min(ax, bx), cx);
+	/*int bbminx = std::min(std::min(ax, bx), cx);
 	int bbminy = std::min(std::min(ay, by), cy);
 	int bbmaxx = std::max(std::max(ax, bx), cx);
-	int bbmaxy = std::max(std::max(ay, by), cy);
+	int bbmaxy = std::max(std::max(ay, by), cy);*/
+	/*double zi0 = 1.0 / az;
+	double zi1 = 1.0 / bz;
+	double zi2 = 1.0 / cz;*/
+
+	int width = framebuffer.width(),height=framebuffer.height();
+	auto [bbminx, bbmaxx] = std::minmax({ ax,bx,cx }); // bounding box for the triangle
+	auto [bbminy, bbmaxy] = std::minmax({ ay,by,cy}); // defined by its top left and bottom right corners
+	bbminx = std::max(bbminx, .0f);
+	bbminy = std::max(bbminy, .0f);
+	bbmaxx = std::min(bbmaxx, (float)width - 1);
+	bbmaxy = std::min(bbmaxy, (float)height - 1);
+//#pragma omp parallel for
 	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-	if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
-#pragma omp parallel for
+	if (total_area <=0) return; // backface culling + discarding triangles that cover less than a pixel
+	//if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
+	
+//#pragma omp parallel for
 	for (int x = bbminx; x <= bbmaxx; ++x) {
 		for (int y = bbminy; y <= bbmaxy; y++) {
 			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
 			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
 			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
 			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
-			unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
-			if (z <= zbuffer.get(x, y)[0]) continue;
-			zbuffer.set(x, y, { z });
+			//double interpolated_reciprocal_z = alpha * zi0 + beta * zi1 + gamma * zi2;
+			//double z = 1.0 / interpolated_reciprocal_z;
+			double z = (alpha * az + beta * bz + gamma * cz); // perspective correct interpolation of z
+			if (z > zbuffer[x+y*width]) continue;
+			zbuffer[x + y * width] = z;
 			framebuffer.set(x, y, color);
 
 		}
 	}
 }
 
-void triangle(Vec3f v0, Vec3f v1, Vec3f v2, TGAImage& framebuffer, TGAImage& zbuffer, TGAColor color)
+void triangle(Vec3f v0, Vec3f v1, Vec3f v2, TGAImage& framebuffer, TGAColor color)
 {
 	auto [x0, y0, z0] = v0.getXYZ();
 	auto [x1, y1, z1] = v1.getXYZ();
 	auto [x2, y2, z2] = v2.getXYZ();
-	triangle(x0, y0, z0, x1, y1, z1, x2, y2, z2, framebuffer, zbuffer, color);
+	triangle(x0, y0, z0, x1, y1, z1, x2, y2, z2, framebuffer, color);
 }
 
 
@@ -136,10 +162,12 @@ Matrix viewport(int x, int y, int w, int h) {
 	Matrix m = Matrix::identity(4);
 	m[0][3] = x + w / 2.f;
 	m[1][3] = y + h / 2.f;
-	m[2][3] = 255.f / 2.f;
+	
 
 	m[0][0] = w / 2.f;
 	m[1][1] = h / 2.f;
-	m[2][2] = 255.f / 2.f;
+	
+	m[2][2] = depth/2.f;
+	m[2][3] = depth/2.f;
 	return m;
 }

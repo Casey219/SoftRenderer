@@ -108,6 +108,6 @@ Matrix v2m(Vec3f v) {
 
 // 辅助工具：4x1 矩阵转 Vec3f (包含齐次除法)
 Vec3f m2v(Matrix m) {
-    assert(m.ncols != 1);
+    assert(m.ncols == 1);
     return Vec3f(m[0][0] / m[3][0], m[1][0] / m[3][0], m[2][0] / m[3][0]);
 }
