@@ -1,88 +1,90 @@
-﻿#include "tgaimage.h"
-#include <chrono>
-#include <iostream>
-#include "geometry.h"
+﻿#include "my_gl.h"
 #include "model.h"
 
-#include"my_gl.h"
+extern mat<4, 4> ModelView, Perspective; // "OpenGL" state matrices and
+extern std::vector<double> zbuffer;     // the depth buffer
 
+struct PhongShader : IShader {
+    const Model& model;
+    vec4 l;              // light direction in eye coordinates
+    vec2  varying_uv[3]; // triangle uv coordinates, written by the vertex shader, read by the fragment shader
+    vec4 varying_nrm[3]; // normal per vertex to be interpolated by the fragment shader
+    vec4 tri[3];         // triangle in view coordinates
 
+    PhongShader(const vec3 light, const Model& m) : model(m) {
+        l = normalized((ModelView * vec4{ light.x, light.y, light.z, 0. })); // transform the light vector to view coordinates
+    }
 
-constexpr TGAColor white = { 255, 255, 255, 255 }; 
-constexpr TGAColor green = { 0, 255,   0, 255 };
-constexpr TGAColor red = { 0,   0, 255, 255 };
-constexpr TGAColor blue = { 255, 128,  64, 255 };
-constexpr TGAColor yellow = { 0, 200, 255, 255 };
+    virtual vec4 vertex(const int face, const int vert) {
+        varying_uv[vert] = model.uv(face, vert);
+        varying_nrm[vert] = ModelView.invert_transpose() * model.normal(face, vert);
+        vec4 gl_Position = ModelView * model.vert(face, vert);
+        tri[vert] = gl_Position;
+        return Perspective * gl_Position;                         // in clip coordinates
+    }
 
+    virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const {
+        mat<2, 4> E = { tri[1] - tri[0], tri[2] - tri[0] };
+        mat<2, 2> U = { varying_uv[1] - varying_uv[0], varying_uv[2] - varying_uv[0] };
+        mat<2, 4> T = U.invert() * E;
+        mat<4, 4> D = { normalized(T[0]),  // tangent vector
+                      normalized(T[1]),  // bitangent vector
+                      normalized(varying_nrm[0] * bar[0] + varying_nrm[1] * bar[1] + varying_nrm[2] * bar[2]), // interpolated normal
+                      {0,0,0,1} }; // Darboux frame
+        vec2 uv = varying_uv[0] * bar[0] + varying_uv[1] * bar[1] + varying_uv[2] * bar[2];
+        vec4 n = normalized(D.transpose() * model.normal(uv));
+        vec4 r = normalized(n * (n * l) * 2 - l);                   // reflected light direction
+        double ambient = .4;                                     // ambient light intensity
+        double diffuse = 1. * std::max(0., n * l);                 // diffuse light intensity
+        double specular = (.5 + 2. * sample2D(model.specular(), uv)[0] / 255.) * std::pow(std::max(r.z, 0.), 35);  // specular intensity, note that the camera lies on the z-axis (in eye coordinates), therefore simple r.z, since (0,0,1)*(r.x, r.y, r.z) = r.z
+        TGAColor gl_FragColor = sample2D(model.diffuse(), uv);
+        for (int channel : {0, 1, 2})
+            gl_FragColor[channel] = std::min<int>(255, gl_FragColor[channel] * (ambient + diffuse + specular));
+        return { false, gl_FragColor };                             // do not discard the pixel
+    }
+};
 
+int main(int argc, char** argv) {
+    /*if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " obj/model.obj" << std::endl;
+        return 1;
+    }*/
 
-int main(int argc, char **argv) {
-	constexpr int width = 1600;
-	constexpr int height = 1600;
-	
-	TGAImage framebuffer(width, height, TGAImage::RGB);
-	//TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
+    constexpr int width = 800;      // output image size
+    constexpr int height = 800;
+    constexpr vec3  light{ 1, 1, 1 }; // light source
+    constexpr vec3    eye{ 0, 0, 2 }; // camera position
+    constexpr vec3 center{ 0, 0, 0 }; // camera direction
+    constexpr vec3     up{ 0, 1, 0 }; // camera up vector
 
-	std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
-	Model model(filename.c_str());
+    lookat(eye, center, up);                                   // build the ModelView   matrix
+    init_perspective(norm(eye - center));                        // build the Perspective matrix
+    init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8); // build the Viewport    matrix
+    init_zbuffer(width, height);
+    TGAImage framebuffer(width, height, TGAImage::RGB, { 177, 195, 209, 255 });
 
-	Vec3f camera_position(0.0f, 0.0f, 3.0f);
-	//Vec3f camera_position(0.0f, 3.0f, 0.0f);
-	Vec3f center(0.0f, 0.0f, 0.0f);
-	Vec3f up(0.0f, 1.0f, 0.0f);
+    //for (int m=1; m<argc; m++) {                    // iterate through all input objects
+    //    Model model(argv[m]);                       // load the data
+    //    PhongShader shader(light, model);
+    //    for (int f=0; f<model.nfaces(); f++) {      // iterate through all facets
+    //        Triangle clip = { shader.vertex(f, 0),  // assemble the primitive
+    //                          shader.vertex(f, 1),
+    //                          shader.vertex(f, 2) };
+    //        rasterize(clip, shader, framebuffer);   // rasterize the primitive
+    //    }
+    //}
 
-	Matrix Projection = perspective(45.0f,(float)width/height,0.1f,100.0f);
-	init_zbuffer(width, height);
-	//Matrix Projection = projection((camera_position - center).norm());
-	Matrix MVP = Projection*lookat(camera_position, center, up);
-	Matrix Viewport = viewport(0, 0, width, height);
-	for (int i = 0; i < model.nfaces(); i++) {
-		std::vector<int> face = model.face(i);
-		
-		Vec3f v0 = model.vert(face[0]);
-		Vec3f v1 = model.vert(face[1]);
-		Vec3f v2 = model.vert(face[2]);
+    std::string filename = "../obj/diablo3_pose/diablo3_pose.obj";
+    Model model(filename.c_str());                     // load the data
+    PhongShader shader(light, model);
+    for (int f = 0; f < model.nfaces(); f++) {      // iterate through all facets
+        Triangle clip = { shader.vertex(f, 0),  // assemble the primitive
+                          shader.vertex(f, 1),
+                          shader.vertex(f, 2) };
+        rasterize(clip, shader, framebuffer);   // rasterize the primitive
+    }
 
-		/*Matrix tmp = MVP * v2m(v0);
-		std::cout << "W component: " << tmp[3][0] << std::endl;*/
-
-		/*Vec3f screen_v0 = m2v(Viewport * MVP * v2m(v0));
-		Vec3f screen_v1 = m2v(Viewport * MVP * v2m(v1));
-		Vec3f screen_v2 = m2v(Viewport * MVP * v2m(v2));*/
-
-		Matrix clip_v0 = MVP * v2m(v0);
-		Matrix clip_v1 = MVP * v2m(v1);
-		Matrix clip_v2 = MVP * v2m(v2);
-
-		// 齐次裁剪
-		if (clip_v0[3][0] <= 0 ||clip_v1[3][0] <= 0 ||clip_v2[3][0] <= 0)
-			continue;
-
-		// NDC z
-		float z0 = clip_v0[2][0] / clip_v0[3][0];
-		float z1 = clip_v1[2][0] / clip_v1[3][0];
-		float z2 = clip_v2[2][0] / clip_v2[3][0];
-
-		// 屏幕坐标（仍然用 m2v）
-		Vec3f screen_v0 = m2v(Viewport * clip_v0);
-		Vec3f screen_v1 = m2v(Viewport * clip_v1);
-		Vec3f screen_v2 = m2v(Viewport * clip_v2);
-
-		
-		TGAColor rnd;
-		for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
-		
-		//triangle(screen_v0,screen_v1,screen_v2, framebuffer, rnd);
-		triangle(
-			screen_v0.x, screen_v0.y, z0,
-			screen_v1.x, screen_v1.y, z1,
-			screen_v2.x, screen_v2.y, z2,
-			framebuffer, rnd
-		);
-	}
-
-	
-	framebuffer.write_tga_file("framebuffer.tga");
-
-	return 0;
+    framebuffer.write_tga_file("framebuffer.tga");
+    return 0;
 }
+

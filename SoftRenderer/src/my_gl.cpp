@@ -1,173 +1,52 @@
+#include <algorithm>
 #include "my_gl.h"
 
-const double PI = acos(-1.0);
-const int depth = 1;
-
+mat<4, 4> ModelView, Viewport, Perspective; // "OpenGL" state matrices
 std::vector<double> zbuffer;               // depth buffer
 
-//time≈2.11
-void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color) {
-	bool steep = std::abs(ax - bx) < std::abs(ay - by);
-	if (steep) {
-		std::swap(ax, ay);
-		std::swap(bx, by);
-	}
-	if (ax > bx) {
-		std::swap(ax, bx);
-		std::swap(ay, by);
-	}
-
-	const int dx = bx - ax;
-	const int dy = std::abs(by - ay);
-	const int y_step = (by > ay) ? 1 : -1;
-
-	int y = ay;
-	int ierror = 0;
-
-	for (int x = ax; x <= bx; ++x) {
-		if (steep)
-			framebuffer.set(y, x, color);
-		else
-			framebuffer.set(x, y, color);
-
-		ierror += 2 * dy;
-		const int step = (ierror > dx) ? 1 : 0;
-		y += y_step * step;
-		ierror -= 2 * dx * step;
-	}
+void lookat(const vec3 eye, const vec3 center, const vec3 up) {
+    vec3 n = normalized(eye - center);
+    vec3 l = normalized(cross(up, n));
+    vec3 m = normalized(cross(n, l));
+    ModelView = mat<4, 4>{ {{l.x,l.y,l.z,0}, {m.x,m.y,m.z,0}, {n.x,n.y,n.z,0}, {0,0,0,1}} } *
+        mat<4, 4>{{{1, 0, 0, -center.x}, { 0,1,0,-center.y }, { 0,0,1,-center.z }, { 0,0,0,1 }}};
 }
 
-
-double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
-	//return .5 * ((by - ay) * (ax + bx) + (ay - cy) * (ax + cx) + (cy - by) * (cx + bx));
-	return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+void init_perspective(const double f) {
+    Perspective = { {{1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0, -1 / f,1}} };
 }
 
-void triangle2D(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
-	// bounding box for the triangle
-	int bbminx = std::min(std::min(ax, bx), cx);
-	int bbminy = std::min(std::min(ay, by), cy);
-	int bbmaxx = std::max(std::max(ax, bx), cx);
-	int bbmaxy = std::max(std::max(ay, by), cy);
-	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-	if (total_area <=0) return; 
-	//if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
+void init_viewport(const int x, const int y, const int w, const int h) {
+    Viewport = { {{w / 2., 0, 0, x + w / 2.}, {0, h / 2., 0, y + h / 2.}, {0,0,1,0}, {0,0,0,1}} };
+}
+
+void init_zbuffer(const int width, const int height) {
+    zbuffer = std::vector(width * height, -1000.);
+}
+
+void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer) {
+    vec4 ndc[3] = { clip[0] / clip[0].w, clip[1] / clip[1].w, clip[2] / clip[2].w };                // normalized device coordinates
+    vec2 screen[3] = { (Viewport * ndc[0]).xy(), (Viewport * ndc[1]).xy(), (Viewport * ndc[2]).xy() }; // screen coordinates
+
+    mat<3, 3> ABC = { { {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} } };
+    if (ABC.det() < 1) return; // backface culling + discarding triangles that cover less than a pixel
+
+    auto [bbminx, bbmaxx] = std::minmax({ screen[0].x, screen[1].x, screen[2].x }); // bounding box for the triangle
+    auto [bbminy, bbmaxy] = std::minmax({ screen[0].y, screen[1].y, screen[2].y }); // defined by its top left and bottom right corners
 #pragma omp parallel for
-	for (int x = bbminx; x <= bbmaxx; ++x) {
-		for (int y = bbminy; y <= bbmaxy; y++) {
-			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
-			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
-			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
-			framebuffer.set(x, y, color);
-		}
-	}
+    for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) {         // clip the bounding box by the screen
+        for (int y = std::max<int>(bbminy, 0); y <= std::min<int>(bbmaxy, framebuffer.height() - 1); y++) {
+            vec3 bc_screen = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // barycentric coordinates of {x,y} w.r.t the triangle
+            vec3 bc_clip = { bc_screen.x / clip[0].w, bc_screen.y / clip[1].w, bc_screen.z / clip[2].w };     // check https://github.com/ssloy/tinyrenderer/wiki/Technical-difficulties-linear-interpolation-with-perspective-deformations
+            bc_clip = bc_clip / (bc_clip.x + bc_clip.y + bc_clip.z);
+            if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
+            double z = bc_screen * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };   // linear interpolation of the depth
+            if (z <= zbuffer[x + y * framebuffer.width()]) continue;   // discard fragments that are too deep w.r.t the z-buffer
+            auto [discard, color] = shader.fragment(bc_clip);
+            if (discard) continue;                                 // fragment shader can discard current fragment
+            zbuffer[x + y * framebuffer.width()] = z;                  // update the z-buffer
+            framebuffer.set(x, y, color);                          // update the framebuffer
+        }
+    }
 }
 
-void init_zbuffer(int width, int height) {
-	zbuffer = std::vector(width * height, 1.0);
-	//zbuffer = std::vector(width * height, std::numeric_limits<double>::infinity());
-}
-
-
-void triangle(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, TGAImage& framebuffer, TGAColor color) {
-//void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage& framebuffer, TGAColor color) {
-	// bounding box for the triangle
-	/*int bbminx = std::min(std::min(ax, bx), cx);
-	int bbminy = std::min(std::min(ay, by), cy);
-	int bbmaxx = std::max(std::max(ax, bx), cx);
-	int bbmaxy = std::max(std::max(ay, by), cy);*/
-	/*double zi0 = 1.0 / az;
-	double zi1 = 1.0 / bz;
-	double zi2 = 1.0 / cz;*/
-
-	int width = framebuffer.width(),height=framebuffer.height();
-	auto [bbminx, bbmaxx] = std::minmax({ ax,bx,cx }); // bounding box for the triangle
-	auto [bbminy, bbmaxy] = std::minmax({ ay,by,cy}); // defined by its top left and bottom right corners
-	bbminx = std::max(bbminx, .0f);
-	bbminy = std::max(bbminy, .0f);
-	bbmaxx = std::min(bbmaxx, (float)width - 1);
-	bbmaxy = std::min(bbmaxy, (float)height - 1);
-//#pragma omp parallel for
-	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-	if (total_area <=0) return; // backface culling + discarding triangles that cover less than a pixel
-	//if (total_area < 1) return; // backface culling + discarding triangles that cover less than a pixel
-	
-//#pragma omp parallel for
-	for (int x = bbminx; x <= bbmaxx; ++x) {
-		for (int y = bbminy; y <= bbmaxy; y++) {
-			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-			double beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
-			double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
-			if (alpha < 0 || beta < 0 || gamma < 0) continue; // negative barycentric coordinate => the pixel is outside the triangle
-			//double interpolated_reciprocal_z = alpha * zi0 + beta * zi1 + gamma * zi2;
-			//double z = 1.0 / interpolated_reciprocal_z;
-			double z = (alpha * az + beta * bz + gamma * cz); // perspective correct interpolation of z
-			if (z > zbuffer[x+y*width]) continue;
-			zbuffer[x + y * width] = z;
-			framebuffer.set(x, y, color);
-
-		}
-	}
-}
-
-void triangle(Vec3f v0, Vec3f v1, Vec3f v2, TGAImage& framebuffer, TGAColor color)
-{
-	auto [x0, y0, z0] = v0.getXYZ();
-	auto [x1, y1, z1] = v1.getXYZ();
-	auto [x2, y2, z2] = v2.getXYZ();
-	triangle(x0, y0, z0, x1, y1, z1, x2, y2, z2, framebuffer, color);
-}
-
-
-Matrix lookat(Vec3f eye, Vec3f center, Vec3f up) {
-	Vec3f z = (eye - center).normalize();
-	Vec3f x = (up ^ z).normalize();
-	Vec3f y = (z ^ x).normalize();
-
-	Matrix Minv = Matrix::identity(4);
-	Matrix Tr = Matrix::identity(4);
-
-
-	for (int i = 0; i < 3; i++) {
-		Minv[0][i] = x.raw[i];
-		Minv[1][i] = y.raw[i];
-		Minv[2][i] = z.raw[i];
-
-		Tr[i][3] = -eye.raw[i];
-	}
-
-	return Minv * Tr;
-}
-
-//Matrix projection(const float f) {
-//	Matrix p = Matrix::identity(4);
-//	p[3][2] = -1/f; // f 是相机到原点的距离
-//	return p;
-//}
-
-Matrix perspective(float fov_deg, float aspect, float znear, float zfar) {
-	Matrix m = Matrix::identity(4);
-	float tanHalfFovy = tan(fov_deg * PI / 360.0f);
-	m[0][0] = 1.0f / (aspect * tanHalfFovy);
-	m[1][1] = 1.0f / (tanHalfFovy);
-	m[2][2] = -(zfar + znear) / (zfar - znear);
-	m[2][3] = -(2.0f * zfar * znear) / (zfar - znear);
-	m[3][2] = -1.0f;
-	m[3][3] = 0.0f;
-	return m;
-}
-
-Matrix viewport(int x, int y, int w, int h) {
-	Matrix m = Matrix::identity(4);
-	m[0][3] = x + w / 2.f;
-	m[1][3] = y + h / 2.f;
-	
-
-	m[0][0] = w / 2.f;
-	m[1][1] = h / 2.f;
-	
-	m[2][2] = depth/2.f;
-	m[2][3] = depth/2.f;
-	return m;
-}

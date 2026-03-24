@@ -2,22 +2,19 @@
 #include "tgaimage.h"
 #include "geometry.h"
 
-void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color);
+void lookat(const vec3 eye, const vec3 center, const vec3 up);
+void init_perspective(const double f);
+void init_viewport(const int x, const int y, const int w, const int h);
+void init_zbuffer(const int width, const int height);
 
-double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy);
+struct IShader {
+    static TGAColor sample2D(const TGAImage& img, const vec2& uvf) {
+        return img.get(uvf[0] * img.width(), uvf[1] * img.height());
+    }
+    virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const = 0;
+};
 
-void triangle2D(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color);
+typedef vec4 Triangle[3]; // a triangle primitive is made of three ordered points
+void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer);
 
-void init_zbuffer(int width, int height);
-
-void triangle(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, TGAImage& framebuffer,TGAColor color);
-//void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage& framebuffer,TGAColor color);
-
-void triangle(Vec3f v0,Vec3f v1,Vec3f v2,TGAImage& framebuffer,  TGAColor color);
-
-Matrix lookat(Vec3f eye, Vec3f center, Vec3f up);
-
-Matrix perspective(float fov_deg, float aspect, float znear, float zfar);
-
-Matrix viewport(int x, int y, int w, int h);
 

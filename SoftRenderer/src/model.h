@@ -1,31 +1,26 @@
-#pragma once
-#ifndef __MODEL_H__
-#define __MODEL_H__
-
-#include <vector>
 #include "geometry.h"
-#include <cassert>
+#include "tgaimage.h"
 
 class Model {
-private:
-	std::vector<Vec3f> verts_;
-	std::vector<std::vector<int> > faces_;
+    std::vector<vec4> verts = {};    // array of vertices        ©´ generally speaking, these arrays
+    std::vector<vec4> norms = {};    // array of normal vectors  ©¦ do not have the same size
+    std::vector<vec2> tex = {};      // array of tex coords      ©¼ check the logs of the Model() constructor
+    std::vector<int> facet_vrt = {}; //  ©´ per-triangle indices in the above arrays,
+    std::vector<int> facet_nrm = {}; //  ©¦ the size is supposed to be
+    std::vector<int> facet_tex = {}; //  ©¼ nfaces()*3
+    TGAImage diffusemap = {};       // diffuse color texture
+    TGAImage normalmap = {};       // normal map texture
+    TGAImage specularmap = {};       // specular texture
 public:
-    explicit Model(const char* filename);
-	~Model();
+    Model(const std::string filename);
+    int nverts() const; // number of vertices
+    int nfaces() const; // number of triangles
+    vec4 vert(const int i) const;                          // 0 <= i < nverts()
+    vec4 vert(const int iface, const int nthvert) const;   // 0 <= iface <= nfaces(), 0 <= nthvert < 3
+    vec4 normal(const int iface, const int nthvert) const; // normal coming from the "vn x y z" entries in the .obj file
+    vec4 normal(const vec2& uv) const;                     // normal vector from the normal map texture
+    vec2 uv(const int iface, const int nthvert) const;     // uv coordinates of triangle corners
+    const TGAImage& diffuse() const;
+    const TGAImage& specular() const;
 
-    int nverts() const { return (int)verts_.size(); }
-    int nfaces() const { return (int)faces_.size(); }
-
-    Vec3f vert(int i) const {
-        assert(i >= 0 && i < (int)verts_.size());
-        return verts_[i];
-    }
-
-    const std::vector<int>& face(int idx) const {
-        assert(idx >= 0 && idx < (int)faces_.size());
-        return faces_[idx];
-    }
 };
-
-#endif //__MODEL_H__
