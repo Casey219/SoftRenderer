@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <fstream>
 #include <vector>
-#include <algorithm>
 
 #pragma pack(push,1)
 struct TGAHeader {
@@ -22,46 +21,28 @@ struct TGAHeader {
 #pragma pack(pop)
 
 struct TGAColor {
-    std::uint8_t bgra[4] = {0,0,0,0};
+    std::uint8_t bgra[4] = { 0,0,0,0 };
     std::uint8_t bytespp = 4;
     std::uint8_t& operator[](const int i) { return bgra[i]; }
     const std::uint8_t& operator[](const int i) const { return bgra[i]; }
 };
 
 struct TGAImage {
-    enum Format { GRAYSCALE=1, RGB=3, RGBA=4 };
+    enum Format { GRAYSCALE = 1, RGB = 3, RGBA = 4 };
     TGAImage() = default;
     TGAImage(const int w, const int h, const int bpp, TGAColor c = {});
     bool  read_tga_file(const std::string filename);
-    bool write_tga_file(const std::string filename, const bool vflip=true, const bool rle=true) const;
+    bool write_tga_file(const std::string filename, const bool vflip = true, const bool rle = true) const;
     void flip_horizontally();
     void flip_vertically();
     TGAColor get(const int x, const int y) const;
-    void set(const int x, const int y, const TGAColor &c);
+    void set(const int x, const int y, const TGAColor& c);
     int width()  const;
     int height() const;
 private:
-    bool   load_rle_data(std::ifstream &in);
-    bool unload_rle_data(std::ofstream &out) const;
+    bool   load_rle_data(std::ifstream& in);
+    bool unload_rle_data(std::ofstream& out) const;
     int w = 0, h = 0;
     std::uint8_t bpp = 0;
     std::vector<std::uint8_t> data = {};
 };
-
-inline TGAColor operator*(float f, const TGAColor& c) {
-    TGAColor res = c;
-    for (int i = 0; i < 4; ++i) {
-        res[i] = static_cast<std::uint8_t>(std::clamp(f * c[i], 0.0f, 255.0f));
-    }
-    return res;
-}
-
-inline TGAColor operator+(const TGAColor& a, const TGAColor& b) {
-    TGAColor res;
-    for (int i = 0; i < 4; ++i) {
-        int sum = a[i] + b[i];
-        res[i] = static_cast<std::uint8_t>(std::clamp(sum, 0, 255));
-    }
-    return res;
-}
-
