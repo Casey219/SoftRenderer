@@ -3,64 +3,75 @@
 #include <cassert>
 #include <iostream>
 
-template<int n> struct vec {
+template<int n> 
+struct vec {
     double data[n] = { 0 };
     double& operator[](const int i) { assert(i >= 0 && i < n); return data[i]; }
     double  operator[](const int i) const { assert(i >= 0 && i < n); return data[i]; }
 };
 
-template<int n> double operator*(const vec<n>& lhs, const vec<n>& rhs) {
-    double ret = 0;                         // N.B. Do not ever, ever use such for loops! They are highly confusing.
-    for (int i = n; i--; ret += lhs[i] * rhs[i]); // Here I used them as a tribute to old-school game programmers fighting for every CPU cycle.
-    return ret;                             // Once upon a time reverse loops were faster than the normal ones, it is not the case anymore.
+template<int n> 
+double operator*(const vec<n>& lhs, const vec<n>& rhs) {
+    double ret = 0;                         
+    for (int i = n; i--; ret += lhs[i] * rhs[i]); 
+    return ret;                             
 }
 
-template<int n> vec<n> operator+(const vec<n>& lhs, const vec<n>& rhs) {
+template<int n> 
+vec<n> operator+(const vec<n>& lhs, const vec<n>& rhs) {
     vec<n> ret = lhs;
     for (int i = n; i--; ret[i] += rhs[i]);
     return ret;
 }
 
-template<int n> vec<n> operator-(const vec<n>& lhs, const vec<n>& rhs) {
+template<int n> 
+vec<n> operator-(const vec<n>& lhs, const vec<n>& rhs) {
     vec<n> ret = lhs;
     for (int i = n; i--; ret[i] -= rhs[i]);
     return ret;
 }
 
-template<int n> vec<n> operator*(const vec<n>& lhs, const double& rhs) {
+template<int n> 
+vec<n> operator*(const vec<n>& lhs, const double& rhs) {
     vec<n> ret = lhs;
     for (int i = n; i--; ret[i] *= rhs);
     return ret;
 }
 
-template<int n> vec<n> operator*(const double& lhs, const vec<n>& rhs) {
+template<int n> 
+vec<n> operator*(const double& lhs, const vec<n>& rhs) {
     return rhs * lhs;
 }
 
-template<int n> vec<n> operator/(const vec<n>& lhs, const double& rhs) {
+template<int n> 
+vec<n> operator/(const vec<n>& lhs, const double& rhs) {
     vec<n> ret = lhs;
     for (int i = n; i--; ret[i] /= rhs);
     return ret;
 }
 
-template<int n> std::ostream& operator<<(std::ostream& out, const vec<n>& v) {
+template<int n> 
+std::ostream& operator<<(std::ostream& out, const vec<n>& v) {
     for (int i = 0; i < n; i++) out << v[i] << " ";
     return out;
 }
 
-template<> struct vec<2> {
+template<> 
+struct vec<2> {
     double x = 0, y = 0;
     double& operator[](const int i) { assert(i >= 0 && i < 2); return i ? y : x; }
     double  operator[](const int i) const { assert(i >= 0 && i < 2); return i ? y : x; }
 };
 
-template<> struct vec<3> {
+template<> 
+struct vec<3> {
     double x = 0, y = 0, z = 0;
     double& operator[](const int i) { assert(i >= 0 && i < 3); return i ? (1 == i ? y : z) : x; }
     double  operator[](const int i) const { assert(i >= 0 && i < 3); return i ? (1 == i ? y : z) : x; }
 };
 
-template<> struct vec<4> {
+template<> 
+struct vec<4> {
     double x = 0, y = 0, z = 0, w = 0;
     double& operator[](const int i) { assert(i >= 0 && i < 4); return i < 2 ? (i ? y : x) : (2 == i ? z : w); }
     double  operator[](const int i) const { assert(i >= 0 && i < 4); return i < 2 ? (i ? y : x) : (2 == i ? z : w); }
@@ -86,7 +97,8 @@ inline vec3 cross(const vec3& v1, const vec3& v2) {
 
 template<int n> struct dt;
 
-template<int nrows, int ncols> struct mat {
+template<int nrows, int ncols> 
+struct mat {
     vec<ncols> rows[nrows] = { {} };
 
     vec<ncols>& operator[] (const int idx) { assert(idx >= 0 && idx < nrows); return rows[idx]; }
@@ -104,7 +116,7 @@ template<int nrows, int ncols> struct mat {
     }
 
     mat<nrows, ncols> invert_transpose() const {
-        mat<nrows, ncols> adjugate_transpose; // transpose to ease determinant computation, check the last line
+        mat<nrows, ncols> adjugate_transpose; 
         for (int i = nrows; i--; )
             for (int j = ncols; j--; adjugate_transpose[i][j] = cofactor(i, j));
         return adjugate_transpose / (adjugate_transpose[0] * rows[0]);
@@ -171,7 +183,7 @@ template<int nrows, int ncols> std::ostream& operator<<(std::ostream& out, const
     return out;
 }
 
-template<int n> struct dt { // template metaprogramming to compute the determinant recursively
+template<int n> struct dt { 
     static double det(const mat<n, n>& src) {
         double ret = 0;
         for (int i = n; i--; ret += src[0][i] * src.cofactor(0, i));
@@ -179,7 +191,7 @@ template<int n> struct dt { // template metaprogramming to compute the determina
     }
 };
 
-template<> struct dt<1> {   // template specialization to stop the recursion
+template<> struct dt<1> {   
     static double det(const mat<1, 1>& src) {
         return src[0][0];
     }

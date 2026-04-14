@@ -2,10 +2,10 @@
 #include "model.h"
 //#include <algorithm>
 
-extern mat<4, 4> Viewport, ModelView, Perspective; // "OpenGL" state matrices and
-extern std::vector<double> zbuffer;     // the depth buffer
+extern mat<4, 4> Viewport, ModelView, Perspective; 
+extern std::vector<double> zbuffer;     
 
-struct BlankShader : IShader {
+struct BlankShader : Shader {
     const Model& model;
 
     BlankShader(const Model& m) : model(m) {}
@@ -20,14 +20,14 @@ struct BlankShader : IShader {
     }
 };
 
-struct PhongShader : IShader {
+struct BlinnPhongShader : Shader {
     const Model& model;
-    vec4 l;              // light direction in eye coordinates
-    vec2  varying_uv[3]; // triangle uv coordinates, written by the vertex shader, read by the fragment shader
-    vec4 varying_nrm[3]; // normal per vertex to be interpolated by the fragment shader
-    vec4 tri[3];         // triangle in view coordinates
+    vec4 l;              
+	vec2 varying_uv[3];  // 三角形的uv坐标，由顶点着色器写入，片段着色器读取
+    vec4 varying_nrm[3]; // 每个顶点的法线，由片元着色器插值
+	vec4 tri[3];         // 三角形的三个顶点在视图坐标
 
-    PhongShader(const vec3 light, const Model& m) : model(m) {
+    BlinnPhongShader(const vec3 light, const Model& m) : model(m) {
         l = normalized((ModelView * vec4{ light.x, light.y, light.z, 0. })); // transform the light vector to view coordinates
     }
 
@@ -36,28 +36,32 @@ struct PhongShader : IShader {
         varying_nrm[vert] = ModelView.invert_transpose() * model.normal(face, vert);
         vec4 gl_Position = ModelView * model.vert(face, vert);
         tri[vert] = gl_Position;
-        return Perspective * gl_Position;                         // in clip coordinates
+        return Perspective * gl_Position;                         //裁剪坐标
     }
 
     virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const {
         mat<2, 4> E = { tri[1] - tri[0], tri[2] - tri[0] };
         mat<2, 2> U = { varying_uv[1] - varying_uv[0], varying_uv[2] - varying_uv[0] };
         mat<2, 4> T = U.invert() * E;
-        mat<4, 4> D = { normalized(T[0]),  // tangent vector
-                      normalized(T[1]),  // bitangent vector
+        mat<4, 4> D = { normalized(T[0]),  // tangent
+                      normalized(T[1]),  // bitangent
                       normalized(varying_nrm[0] * bar[0] + varying_nrm[1] * bar[1] + varying_nrm[2] * bar[2]), // interpolated normal
-                      {0,0,0,1} }; // Darboux frame
+                      {0,0,0,1} }; 
         vec2 uv = varying_uv[0] * bar[0] + varying_uv[1] * bar[1] + varying_uv[2] * bar[2];
         vec4 n = normalized(D.transpose() * model.normal(uv));
-        vec4 r = normalized(n * (n * l) * 2 - l);                   // reflected light direction
-        double ambient = .4;                                     // ambient light intensity
-        double diffuse = 1. * std::max(0., n * l);                 // diffuse light intensity
-        double specular = (1. + 3. * sample2D(model.specular(), uv)[0] / 255.) * std::pow(std::max(r.z, 0.), 35);  // specular intensity, note that the camera lies on the z-axis (in eye coordinates), therefore simple r.z, since (0,0,1)*(r.x, r.y, r.z) = r.z
+
+        // Blinn-Phong
+        vec4 viewDir = vec4{0., 0., 1., 0.}; 
+		vec4 h = normalized(l + viewDir);    // 半程向量
+
+        double ambient = .4;                                 
+        double diffuse = 1. * std::max(0., n * l);                 
+        double specular = (1. + 3. * sample2D(model.specular(), uv)[0] / 255.) * std::pow(std::max(0., n * h), 35); // Blinn-Phong specular
         TGAColor gl_FragColor = sample2D(model.diffuse(), uv);
         //      TGAColor gl_FragColor = {255, 255, 255, 255};
         for (int channel : {0, 1, 2})
             gl_FragColor[channel] = std::min<int>(255, gl_FragColor[channel] * (ambient + diffuse + specular));
-        return { false, gl_FragColor };                             // do not discard the pixel
+        return { false, gl_FragColor };                             
     }
 };
 
@@ -90,16 +94,16 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    constexpr int width = 800;      // output image size
+    constexpr int width = 800;      
     constexpr int height = 800;
-    constexpr int shadoww = 8000;    // shadow map buffer size
+    constexpr int shadoww = 8000;   
     constexpr int shadowh = 8000;
-    constexpr vec3  light{ 1, 1, 1 }; // light source
-    constexpr vec3    eye{ -1, 0, 2 }; // camera position
-    constexpr vec3 center{ 0, 0, 0 }; // camera direction
-    constexpr vec3     up{ 0, 1, 0 }; // camera up vector
+	constexpr vec3  light{ 1, 1, 1 }; // 光源位置，注意它是一个方向向量，z分量必须为正，否则阴影贴图会被翻转过来，导致错误的结果
+    constexpr vec3    eye{ -1, 0, 2 }; // 相机位置
+	constexpr vec3 center{ 0, 0, 0 }; // 相机看向原点
+    constexpr vec3     up{ 0, 1, 0 }; // 相机up向量
 
-    // usual rendering pass
+    
     lookat(eye, center, up);
     init_perspective(norm(eye - center));
     init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8);
@@ -107,14 +111,14 @@ int main(int argc, char** argv) {
     TGAImage framebuffer(width, height, TGAImage::RGB, { 177, 195, 209, 255 });
     //    TGAImage framebuffer(width, height, TGAImage::RGB);
 
-    for (int m = 1; m < argc; m++) {                    // iterate through all input objects
-        Model model(argv[m]);                       // load the data
-        PhongShader shader(light, model);
-        for (int f = 0; f < model.nfaces(); f++) {      // iterate through all facets
-            Triangle clip = { shader.vertex(f, 0),  // assemble the primitive
+    for (int m = 1; m < argc; m++) {                    
+        Model model(argv[m]);                       
+        BlinnPhongShader shader(light, model); // 使用 Blinn-Phong 着色器
+        for (int f = 0; f < model.nfaces(); f++) {      
+            Triangle clip = { shader.vertex(f, 0),  
                               shader.vertex(f, 1),
                               shader.vertex(f, 2) };
-            rasterize(clip, shader, framebuffer);   // rasterize the primitive
+            rasterize(clip, shader, framebuffer);   
         }
     }
     framebuffer.write_tga_file("framebuffer.tga");
@@ -124,21 +128,21 @@ int main(int argc, char** argv) {
     std::vector<double> zbuffer_copy = zbuffer;
     mat<4, 4> M = (Viewport * Perspective * ModelView).invert();
 
-    { // shadow rendering pass
+    { // 阴影渲染pass
         lookat(light, center, up);
         init_perspective(norm(eye - center));
         init_viewport(shadoww / 16, shadowh / 16, shadoww * 7 / 8, shadowh * 7 / 8);
         init_zbuffer(shadoww, shadowh);
         TGAImage trash(shadoww, shadowh, TGAImage::RGB, { 177, 195, 209, 255 });
 
-        for (int m = 1; m < argc; m++) {                    // iterate through all input objects
-            Model model(argv[m]);                       // load the data
+        for (int m = 1; m < argc; m++) {                    
+            Model model(argv[m]);                       
             BlankShader shader{ model };
-            for (int f = 0; f < model.nfaces(); f++) {      // iterate through all facets
-                Triangle clip = { shader.vertex(f, 0),  // assemble the primitive
+            for (int f = 0; f < model.nfaces(); f++) {      
+                Triangle clip = { shader.vertex(f, 0),  
                                   shader.vertex(f, 1),
                                   shader.vertex(f, 2) };
-                rasterize(clip, shader, trash);         // rasterize the primitive
+                rasterize(clip, shader, trash);         
             }
         }
         trash.write_tga_file("shadowmap.tga");
@@ -149,15 +153,15 @@ int main(int argc, char** argv) {
     mat<4, 4> N = Viewport * Perspective * ModelView;
 
 
-    // post-processing
+    //后处理
     for (int x = 0; x < width; x++) {
         for (int y = 0; y < height; y++) {
             vec4 fragment = M * vec4{ (double)x, (double)y, zbuffer_copy[x + y * width], 1. };
             vec4 q = N * fragment;
             vec3 p = q.xyz() / q.w;
-            bool lit = (fragment.z < -100 ||                                   // it's the background or
-                (p.x < 0 || p.x >= shadoww || p.y < 0 || p.y >= shadowh) ||   // it is out of bounds of the shadow buffer
-                (p.z > zbuffer[int(p.x) + int(p.y) * shadoww] - .03));  // it is visible
+            bool lit = (fragment.z < -100 ||                                   // 背景
+				(p.x < 0 || p.x >= shadoww || p.y < 0 || p.y >= shadowh) ||   // 超出阴影贴图范围
+                (p.z > zbuffer[int(p.x) + int(p.y) * shadoww] - .03));  // 可见
             mask[x + y * width] = lit;
         }
     }

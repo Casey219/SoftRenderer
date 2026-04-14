@@ -1,8 +1,8 @@
 #include <algorithm>
 #include "my_gl.h"
 
-mat<4, 4> ModelView, Viewport, Perspective; // "OpenGL" state matrices
-std::vector<double> zbuffer;               // depth buffer
+mat<4, 4> ModelView, Viewport, Perspective; 
+std::vector<double> zbuffer;               // 深度缓冲
 
 void lookat(const vec3 eye, const vec3 center, const vec3 up) {
     vec3 n = normalized(eye - center);
@@ -24,28 +24,28 @@ void init_zbuffer(const int width, const int height) {
     zbuffer = std::vector(width * height, -1000.);
 }
 
-void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer) {
-    vec4 ndc[3] = { clip[0] / clip[0].w, clip[1] / clip[1].w, clip[2] / clip[2].w };                // normalized device coordinates
-    vec2 screen[3] = { (Viewport * ndc[0]).xy(), (Viewport * ndc[1]).xy(), (Viewport * ndc[2]).xy() }; // screen coordinates
+void rasterize(const Triangle& clip, const Shader& shader, TGAImage& framebuffer) {
+    vec4 ndc[3] = { clip[0] / clip[0].w, clip[1] / clip[1].w, clip[2] / clip[2].w };                // 转化为NDC坐标
+    vec2 screen[3] = { (Viewport * ndc[0]).xy(), (Viewport * ndc[1]).xy(), (Viewport * ndc[2]).xy() }; // 转化为屏幕坐标
 
     mat<3, 3> ABC = { { {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} } };
-    if (ABC.det() < 1) return; // backface culling + discarding triangles that cover less than a pixel
-
-    auto [bbminx, bbmaxx] = std::minmax({ screen[0].x, screen[1].x, screen[2].x }); // bounding box for the triangle
-    auto [bbminy, bbmaxy] = std::minmax({ screen[0].y, screen[1].y, screen[2].y }); // defined by its top left and bottom right corners
+    if (ABC.det() < 1) return; // 背面剔除并丢弃小于一个像素的三角形
+    //求三角形在屏幕空间的包围盒
+    auto [bbminx, bbmaxx] = std::minmax({ screen[0].x, screen[1].x, screen[2].x }); 
+    auto [bbminy, bbmaxy] = std::minmax({ screen[0].y, screen[1].y, screen[2].y }); 
 #pragma omp parallel for
-    for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) {         // clip the bounding box by the screen
+    for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) {         // 只对包围盒内的像素进行处理
         for (int y = std::max<int>(bbminy, 0); y <= std::min<int>(bbmaxy, framebuffer.height() - 1); y++) {
             vec3 bc_screen = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // barycentric coordinates of {x,y} w.r.t the triangle
-            vec3 bc_clip = { bc_screen.x / clip[0].w, bc_screen.y / clip[1].w, bc_screen.z / clip[2].w };     // check https://github.com/ssloy/tinyrenderer/wiki/Technical-difficulties-linear-interpolation-with-perspective-deformations
+            vec3 bc_clip = { bc_screen.x / clip[0].w, bc_screen.y / clip[1].w, bc_screen.z / clip[2].w };     
             bc_clip = bc_clip / (bc_clip.x + bc_clip.y + bc_clip.z);
-            if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;                                                    // negative barycentric coordinate => the pixel is outside the triangle
-            double z = bc_screen * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };  // linear interpolation of the depth
-            if (z <= zbuffer[x + y * framebuffer.width()]) continue;   // discard fragments that are too deep w.r.t the z-buffer
+            if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;  // 负的重心坐标说明像素不在三角形中
+            double z = bc_screen * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };  // 深度的线性插值
+            if (z <= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
             auto [discard, color] = shader.fragment(bc_clip);
-            if (discard) continue;                                 // fragment shader can discard current fragment
-            zbuffer[x + y * framebuffer.width()] = z;                  // update the z-buffer
-            framebuffer.set(x, y, color);                          // update the framebuffer
+            if (discard) continue;                                 // fragment shader可以丢弃当前fragment
+            zbuffer[x + y * framebuffer.width()] = z;                 
+            framebuffer.set(x, y, color);                          
         }
     }
 }
