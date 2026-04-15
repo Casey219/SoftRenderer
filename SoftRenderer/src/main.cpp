@@ -15,7 +15,7 @@ struct BlankShader : Shader {
         return Perspective * gl_Position;
     }
 
-    virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const {
+    virtual std::pair<bool, TGAColor> fragment(const vec3 bc) const {
         return { false, {255, 255, 255, 255} };
     }
 };
@@ -28,7 +28,7 @@ struct BlinnPhongShader : Shader {
 	vec4 tri[3];         // 三角形的三个顶点在视图坐标
 
     BlinnPhongShader(const vec3 light, const Model& m) : model(m) {
-        l = normalized((ModelView * vec4{ light.x, light.y, light.z, 0. })); // transform the light vector to view coordinates
+        l = normalized((ModelView * vec4{ light.x, light.y, light.z, 0. })); 
     }
 
     virtual vec4 vertex(const int face, const int vert) {
@@ -39,24 +39,24 @@ struct BlinnPhongShader : Shader {
         return Perspective * gl_Position;                         //裁剪坐标
     }
 
-    virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const {
+    virtual std::pair<bool, TGAColor> fragment(const vec3 bc) const {
         mat<2, 4> E = { tri[1] - tri[0], tri[2] - tri[0] };
         mat<2, 2> U = { varying_uv[1] - varying_uv[0], varying_uv[2] - varying_uv[0] };
         mat<2, 4> T = U.invert() * E;
         mat<4, 4> D = { normalized(T[0]),  // tangent
                       normalized(T[1]),  // bitangent
-                      normalized(varying_nrm[0] * bar[0] + varying_nrm[1] * bar[1] + varying_nrm[2] * bar[2]), // interpolated normal
+                      normalized(varying_nrm[0] * bc[0] + varying_nrm[1] * bc[1] + varying_nrm[2] * bc[2]), // interpolated normal
                       {0,0,0,1} }; 
-        vec2 uv = varying_uv[0] * bar[0] + varying_uv[1] * bar[1] + varying_uv[2] * bar[2];
+        vec2 uv = varying_uv[0] * bc[0] + varying_uv[1] * bc[1] + varying_uv[2] * bc[2];
         vec4 n = normalized(D.transpose() * model.normal(uv));
 
         // Blinn-Phong
-        vec4 viewDir = vec4{0., 0., 1., 0.}; 
+        vec4 viewDir = vec4{0.0, 0.0, 1.0, 0.0}; 
 		vec4 h = normalized(l + viewDir);    // 半程向量
 
-        double ambient = .4;                                 
-        double diffuse = 1. * std::max(0., n * l);                 
-        double specular = (1. + 3. * sample2D(model.specular(), uv)[0] / 255.) * std::pow(std::max(0., n * h), 35); // Blinn-Phong specular
+        double ambient = 0.4;                                 
+        double diffuse = 1.0 * std::max(0., n * l);                 
+        double specular = (1.0 + 3.0 * sample2D(model.specular(), uv)[0] / 255.0) * std::pow(std::max(0.0, n * h), 35); // Blinn-Phong specular
         TGAColor gl_FragColor = sample2D(model.diffuse(), uv);
         //      TGAColor gl_FragColor = {255, 255, 255, 255};
         for (int channel : {0, 1, 2})
@@ -98,14 +98,19 @@ int main(int argc, char** argv) {
     constexpr int height = 800;
     constexpr int shadoww = 8000;   
     constexpr int shadowh = 8000;
-	constexpr vec3  light{ 1, 1, 1 }; // 光源位置，注意它是一个方向向量，z分量必须为正，否则阴影贴图会被翻转过来，导致错误的结果
+	constexpr vec3  light{ 1, 1, 1 }; 
     constexpr vec3    eye{ -1, 0, 2 }; // 相机位置
 	constexpr vec3 center{ 0, 0, 0 }; // 相机看向原点
     constexpr vec3     up{ 0, 1, 0 }; // 相机up向量
-
+	const double M_PI = 3.14159265358979323846;
+    double fovy = 45.0 * M_PI / 180.0;  // 45度视野（转换为弧度）
+    double aspect = width / (double)height; // 屏幕宽高比
+    double near = 0.1;   // 近裁剪面
+    double far = 100.0; // 远裁剪面（
     
     lookat(eye, center, up);
     init_perspective(norm(eye - center));
+	//init_perspective(fovy, aspect, near, far);
     init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8);
     init_zbuffer(width, height);
     TGAImage framebuffer(width, height, TGAImage::RGB, { 177, 195, 209, 255 });

@@ -9,11 +9,23 @@ void lookat(const vec3 eye, const vec3 center, const vec3 up) {
     vec3 l = normalized(cross(up, n));
     vec3 m = normalized(cross(n, l));
     ModelView = mat<4, 4>{ {{l.x,l.y,l.z,0}, {m.x,m.y,m.z,0}, {n.x,n.y,n.z,0}, {0,0,0,1}} } *
-        mat<4, 4>{{{1, 0, 0, -center.x}, { 0,1,0,-center.y }, { 0,0,1,-center.z }, { 0,0,0,1 }}};
+        mat<4, 4>{{{1, 0, 0, -eye.x}, { 0,1,0,-eye.y }, { 0,0,1,-eye.z }, { 0,0,0,1 }}};
+        //mat<4, 4>{{{1, 0, 0, -center.x}, { 0,1,0,-center.y }, { 0,0,1,-center.z }, { 0,0,0,1 }}};
 }
 
 void init_perspective(const double f) {
     Perspective = { {{1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0, -1 / f,1}} };
+}
+
+void init_perspective(double fovy, double aspect, double near, double far) {
+    double tanHalfFovy = std::tan(fovy / 2.0);
+    Perspective = mat<4, 4>{ 0 }; // 先全部初始化为0
+
+    Perspective[0][0] = 1.0 / (aspect * tanHalfFovy);
+    Perspective[1][1] = 1.0 / (tanHalfFovy);
+    Perspective[2][2] = -(far + near) / (far - near);
+    Perspective[2][3] = -(2.0 * far * near) / (far - near);
+    Perspective[3][2] = -1.0;
 }
 
 void init_viewport(const int x, const int y, const int w, const int h) {
@@ -21,6 +33,8 @@ void init_viewport(const int x, const int y, const int w, const int h) {
 }
 
 void init_zbuffer(const int width, const int height) {
+    //zbuffer = std::vector(width * height, -1.);
+    //zbuffer = std::vector(width * height, 1.);
     zbuffer = std::vector(width * height, -1000.);
 }
 
@@ -29,18 +43,19 @@ void rasterize(const Triangle& clip, const Shader& shader, TGAImage& framebuffer
     vec2 screen[3] = { (Viewport * ndc[0]).xy(), (Viewport * ndc[1]).xy(), (Viewport * ndc[2]).xy() }; // 转化为屏幕坐标
 
     mat<3, 3> ABC = { { {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} } };
-    if (ABC.det() < 1) return; // 背面剔除并丢弃小于一个像素的三角形
+    if (ABC.det() < 1) return; // 背面剔除并丢弃小三角形
     //求三角形在屏幕空间的包围盒
     auto [bbminx, bbmaxx] = std::minmax({ screen[0].x, screen[1].x, screen[2].x }); 
     auto [bbminy, bbmaxy] = std::minmax({ screen[0].y, screen[1].y, screen[2].y }); 
 #pragma omp parallel for
     for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) {         // 只对包围盒内的像素进行处理
         for (int y = std::max<int>(bbminy, 0); y <= std::min<int>(bbmaxy, framebuffer.height() - 1); y++) {
-            vec3 bc_screen = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // barycentric coordinates of {x,y} w.r.t the triangle
+            vec3 bc_screen = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // 重心坐标
             vec3 bc_clip = { bc_screen.x / clip[0].w, bc_screen.y / clip[1].w, bc_screen.z / clip[2].w };     
             bc_clip = bc_clip / (bc_clip.x + bc_clip.y + bc_clip.z);
             if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;  // 负的重心坐标说明像素不在三角形中
             double z = bc_screen * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };  // 深度的线性插值
+            //if (z >= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
             if (z <= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
             auto [discard, color] = shader.fragment(bc_clip);
             if (discard) continue;                                 // fragment shader可以丢弃当前fragment
