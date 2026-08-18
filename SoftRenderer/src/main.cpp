@@ -10,12 +10,14 @@ struct BlankShader : Shader {
 
     BlankShader(const Model& m) : model(m) {}
 
-    virtual vec4 vertex(const int face, const int vert) {
-        vec4 gl_Position = ModelView * model.vert(face, vert);
-        return Perspective * gl_Position;
+    virtual VertexOut vertex(const int face, const int vert) override {
+        VertexOut output;
+        output.view_position = ModelView * model.vert(face, vert);
+        output.clip_position = Perspective * output.view_position;
+        return output;
     }
 
-    virtual std::pair<bool, TGAColor> fragment(const vec3 bc) const {
+    virtual std::pair<bool, TGAColor> fragment(const vec3, const Triangle&) const override {
         return { false, {255, 255, 255, 255} };
     }
 };
@@ -23,31 +25,31 @@ struct BlankShader : Shader {
 struct BlinnPhongShader : Shader {
     const Model& model;
     vec4 l;              
-	vec2 varying_uv[3];  // 三角形的uv坐标，由顶点着色器写入，片段着色器读取 varying表示插值
-    vec4 varying_nrm[3]; // 每个顶点的法线，由片元着色器插值
-	vec4 tri[3];         // 三角形的三个顶点在视图坐标
 
     BlinnPhongShader(const vec3 light, const Model& m) : model(m) {
         l = normalized((ModelView * vec4{ light.x, light.y, light.z, 0. })); 
     }
 
-    virtual vec4 vertex(const int face, const int vert) {
-        varying_uv[vert] = model.uv(face, vert);
-        varying_nrm[vert] = ModelView.invert_transpose() * model.normal(face, vert);
-        vec4 gl_Position = ModelView * model.vert(face, vert);
-        tri[vert] = gl_Position;
-        return Perspective * gl_Position;                         //裁剪坐标
+    virtual VertexOut vertex(const int face, const int vert) override {
+        VertexOut output;
+        output.uv = model.uv(face, vert);
+        output.normal = ModelView.invert_transpose() * model.normal(face, vert);
+        output.view_position = ModelView * model.vert(face, vert);
+        output.clip_position = Perspective * output.view_position;
+        return output;
     }
 
-    virtual std::pair<bool, TGAColor> fragment(const vec3 bc) const {
-        mat<2, 4> E = { tri[1] - tri[0], tri[2] - tri[0] };
-        mat<2, 2> U = { varying_uv[1] - varying_uv[0], varying_uv[2] - varying_uv[0] };
+    virtual std::pair<bool, TGAColor> fragment(const vec3 bc, const Triangle& triangle) const override {
+        mat<2, 4> E = { triangle[1].view_position - triangle[0].view_position,
+                        triangle[2].view_position - triangle[0].view_position };
+        mat<2, 2> U = { triangle[1].uv - triangle[0].uv,
+                        triangle[2].uv - triangle[0].uv };
         mat<2, 4> T = U.invert() * E;
         mat<4, 4> D = { normalized(T[0]),  // tangent
                       normalized(T[1]),  // bitangent
-                      normalized(varying_nrm[0] * bc[0] + varying_nrm[1] * bc[1] + varying_nrm[2] * bc[2]), // interpolated normal
+                      normalized(triangle[0].normal * bc[0] + triangle[1].normal * bc[1] + triangle[2].normal * bc[2]),
                       {0,0,0,1} }; 
-        vec2 uv = varying_uv[0] * bc[0] + varying_uv[1] * bc[1] + varying_uv[2] * bc[2];
+        vec2 uv = triangle[0].uv * bc[0] + triangle[1].uv * bc[1] + triangle[2].uv * bc[2];
         vec4 n = normalized(D.transpose() * model.normal(uv));
 
         // Blinn-Phong
