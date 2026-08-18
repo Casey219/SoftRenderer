@@ -6,17 +6,28 @@
 void lookat(const vec3 eye, const vec3 center, const vec3 up);
 void init_perspective(const double f);
 void init_perspective(double fovy, double aspect, double near, double far);
+void init_orthographic(double left, double right, double bottom, double top, double near, double far);
 void init_viewport(const int x, const int y, const int w, const int h);
 void init_zbuffer(const int width, const int height);
 
 struct VertexOut {
     vec4 clip_position = {};
+    vec4 world_position = {};
     vec4 view_position = {};
     vec4 normal = {};
     vec2 uv = {};
 };
 
 using Triangle = std::array<VertexOut, 3>;
+
+struct ShadowMap {
+    int width = 0;
+    int height = 0;
+    std::vector<double> depth = {};
+    mat<4, 4> light_clip_from_world = {};
+
+    double visibility(const vec4& world_position, double bias, int pcf_radius = 1) const;
+};
 
 struct Shader {
     virtual ~Shader() = default;

@@ -28,6 +28,19 @@ void init_perspective(double fovy, double aspect, double near, double far) {
     Perspective[3][2] = -1.0;
 }
 
+void init_orthographic(const double left, const double right,
+                       const double bottom, const double top,
+                       const double near, const double far) {
+    Perspective = mat<4, 4>{ 0 };
+    Perspective[0][0] = 2. / (right - left);
+    Perspective[1][1] = 2. / (top - bottom);
+    Perspective[2][2] = -2. / (far - near);
+    Perspective[0][3] = -(right + left) / (right - left);
+    Perspective[1][3] = -(top + bottom) / (top - bottom);
+    Perspective[2][3] = -(far + near) / (far - near);
+    Perspective[3][3] = 1.;
+}
+
 void init_viewport(const int x, const int y, const int w, const int h) {
     Viewport = { {{w / 2., 0, 0, x + w / 2.}, {0, h / 2., 0, y + h / 2.}, {0,0,1,0}, {0,0,0,1}} };
 }
@@ -45,6 +58,7 @@ constexpr double raster_epsilon = 1e-12;
 VertexOut interpolate(const VertexOut& from, const VertexOut& to, const double t) {
     VertexOut result;
     result.clip_position = from.clip_position + (to.clip_position - from.clip_position) * t;
+    result.world_position = from.world_position + (to.world_position - from.world_position) * t;
     result.view_position = from.view_position + (to.view_position - from.view_position) * t;
     result.normal = from.normal + (to.normal - from.normal) * t;
     result.uv = from.uv + (to.uv - from.uv) * t;
@@ -158,6 +172,36 @@ void rasterize_clipped_triangle(const Triangle& clip, const Shader& shader, TGAI
     }
 }
 } // namespace
+
+double ShadowMap::visibility(const vec4& world_position, const double bias, const int pcf_radius) const {
+    if (width <= 0 || height <= 0 || depth.size() != static_cast<std::size_t>(width * height))
+        return 1.;
+
+    const vec4 clip = light_clip_from_world * world_position;
+    if (std::abs(clip.w) <= clip_epsilon) return 1.;
+    const vec3 ndc = clip.xyz() / clip.w;
+    if (ndc.x < -1. || ndc.x > 1. || ndc.y < -1. || ndc.y > 1. ||
+        ndc.z < -1. || ndc.z > 1.) return 1.;
+
+    const double screen_x = (ndc.x * .5 + .5) * width;
+    const double screen_y = (ndc.y * .5 + .5) * height;
+    const int center_x = static_cast<int>(std::floor(screen_x));
+    const int center_y = static_cast<int>(std::floor(screen_y));
+    const int radius = std::max(pcf_radius, 0);
+
+    double lit_samples = 0.;
+    int sample_count = 0;
+    for (int offset_y = -radius; offset_y <= radius; ++offset_y) {
+        for (int offset_x = -radius; offset_x <= radius; ++offset_x) {
+            const int x = center_x + offset_x;
+            const int y = center_y + offset_y;
+            if (x < 0 || x >= width || y < 0 || y >= height) continue;
+            lit_samples += ndc.z - bias <= depth[x + y * width] ? 1. : 0.;
+            ++sample_count;
+        }
+    }
+    return sample_count > 0 ? lit_samples / sample_count : 1.;
+}
 
 std::vector<Triangle> clip_triangle(const Triangle& triangle) {
     std::vector<VertexOut> polygon(triangle.begin(), triangle.end());

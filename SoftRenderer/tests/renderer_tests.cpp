@@ -175,6 +175,27 @@ int main() {
                      repeat_bilinear.sample(texture, 1.25, 1.25)[0],
                      "bilinear repeat sampling must remain periodic");
 
+    ShadowMap shadow_map;
+    shadow_map.width = 2;
+    shadow_map.height = 2;
+    shadow_map.depth = { 0.5, 0.5, 0.5, 0.5 };
+    shadow_map.light_clip_from_world = mat<4, 4>{ {{1., 0., 0., 0.},
+                                                   {0., 1., 0., 0.},
+                                                   {0., 0., 1., 0.},
+                                                   {0., 0., 0., 1.}} };
+    passed &= expect(almost_equal(shadow_map.visibility({ 0., 0., 0.4, 1. }, 0., 0), 1.),
+                     "a fragment in front of the stored depth must be lit");
+    passed &= expect(almost_equal(shadow_map.visibility({ 0., 0., 0.6, 1. }, 0., 0), 0.),
+                     "a fragment behind the stored depth must be shadowed");
+    passed &= expect(almost_equal(shadow_map.visibility({ 0., 0., 0.6, 1. }, 0.2, 0), 1.),
+                     "shadow bias must prevent near-equal depths from self-shadowing");
+    passed &= expect(almost_equal(shadow_map.visibility({ 2., 0., 0.6, 1. }, 0., 1), 1.),
+                     "a fragment outside the light frustum must remain lit");
+
+    shadow_map.depth = { 0.3, 0.7, 0.7, 0.7 };
+    passed &= expect(almost_equal(shadow_map.visibility({ 0., 0., 0.5, 1. }, 0., 1), 0.75),
+                     "3x3 PCF must average the valid neighboring shadow samples");
+
     if (!passed) return 1;
     std::cout << "All renderer tests passed.\n";
     return 0;
