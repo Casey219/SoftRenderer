@@ -40,6 +40,7 @@ void init_zbuffer(const int width, const int height) {
 
 namespace {
 constexpr double clip_epsilon = 1e-9;
+constexpr double raster_epsilon = 1e-12;
 
 VertexOut interpolate(const VertexOut& from, const VertexOut& to, const double t) {
     VertexOut result;
@@ -91,26 +92,61 @@ std::vector<VertexOut> clip_against_plane(const std::vector<VertexOut>& input, c
     return output;
 }
 
+double edge_function(const vec2& from, const vec2& to, const vec2& point) {
+    return (to.x - from.x) * (point.y - from.y) -
+           (to.y - from.y) * (point.x - from.x);
+}
+
+// The framebuffer uses a y-up coordinate system. A CCW triangle owns its
+// top and left edges; the opposite orientation of a shared edge is excluded.
+bool is_top_left_edge(const vec2& from, const vec2& to) {
+    const double dx = to.x - from.x;
+    const double dy = to.y - from.y;
+    return dy < 0. || (dy == 0. && dx < 0.);
+}
+
+bool is_inside_edge(const double edge_value, const bool inclusive) {
+    return edge_value > 0. || (edge_value == 0. && inclusive);
+}
+
 void rasterize_clipped_triangle(const Triangle& clip, const Shader& shader, TGAImage& framebuffer) {
     vec4 ndc[3] = { clip[0].clip_position / clip[0].clip_position.w,
                     clip[1].clip_position / clip[1].clip_position.w,
                     clip[2].clip_position / clip[2].clip_position.w }; // 转化为NDC坐标
     vec2 screen[3] = { (Viewport * ndc[0]).xy(), (Viewport * ndc[1]).xy(), (Viewport * ndc[2]).xy() }; // 转化为屏幕坐标
 
-    mat<3, 3> ABC = { { {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} } };
-    if (ABC.det() < 1) return; // 背面剔除并丢弃小三角形
-    //求三角形在屏幕空间的包围盒
+    const double area = edge_function(screen[0], screen[1], screen[2]);
+    if (std::abs(area) <= raster_epsilon) return; // 退化三角形
+    if (area < 0.) return;                        // 背面剔除
+
+    const bool edge0_inclusive = is_top_left_edge(screen[1], screen[2]);
+    const bool edge1_inclusive = is_top_left_edge(screen[2], screen[0]);
+    const bool edge2_inclusive = is_top_left_edge(screen[0], screen[1]);
+
+    // 求像素中心可能落入三角形的整数包围盒
     auto [bbminx, bbmaxx] = std::minmax({ screen[0].x, screen[1].x, screen[2].x }); 
     auto [bbminy, bbmaxy] = std::minmax({ screen[0].y, screen[1].y, screen[2].y }); 
+    const int min_x = std::max(static_cast<int>(std::ceil(bbminx - .5)), 0);
+    const int max_x = std::min(static_cast<int>(std::floor(bbmaxx - .5)), framebuffer.width() - 1);
+    const int min_y = std::max(static_cast<int>(std::ceil(bbminy - .5)), 0);
+    const int max_y = std::min(static_cast<int>(std::floor(bbmaxy - .5)), framebuffer.height() - 1);
+
 #pragma omp parallel for
-    for (int x = std::max<int>(bbminx, 0); x <= std::min<int>(bbmaxx, framebuffer.width() - 1); x++) {         // 只对包围盒内的像素进行处理
-        for (int y = std::max<int>(bbminy, 0); y <= std::min<int>(bbmaxy, framebuffer.height() - 1); y++) {
-            vec3 bc_screen = ABC.invert_transpose() * vec3 { static_cast<double>(x), static_cast<double>(y), 1. }; // 重心坐标
+    for (int x = min_x; x <= max_x; ++x) {
+        for (int y = min_y; y <= max_y; ++y) {
+            const vec2 sample = { x + .5, y + .5 };
+            const double edge0 = edge_function(screen[1], screen[2], sample);
+            const double edge1 = edge_function(screen[2], screen[0], sample);
+            const double edge2 = edge_function(screen[0], screen[1], sample);
+            if (!is_inside_edge(edge0, edge0_inclusive) ||
+                !is_inside_edge(edge1, edge1_inclusive) ||
+                !is_inside_edge(edge2, edge2_inclusive)) continue;
+
+            const vec3 bc_screen = { edge0 / area, edge1 / area, edge2 / area };
             vec3 bc_clip = { bc_screen.x / clip[0].clip_position.w,
                              bc_screen.y / clip[1].clip_position.w,
                              bc_screen.z / clip[2].clip_position.w };
             bc_clip = bc_clip / (bc_clip.x + bc_clip.y + bc_clip.z);
-            if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;  // 负的重心坐标说明像素不在三角形中
             double z = bc_screen * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };  // 深度的线性插值
             if (z >= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
             //if (z <= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
