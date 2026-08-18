@@ -18,7 +18,7 @@ public:
     vec4 vert(const int i) const;                          
     vec4 vert(const int iface, const int nthvert) const;   
     vec4 normal(const int iface, const int nthvert) const;
-    vec4 normal(const vec2& uv) const;                    
+    vec4 normal(const vec2& uv, const Sampler& sampler) const;
     vec2 uv(const int iface, const int nthvert) const;     
     const TGAImage& diffuse() const;
     const TGAImage& specular() const;

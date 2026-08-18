@@ -46,3 +46,20 @@ private:
     std::uint8_t bpp = 0;
     std::vector<std::uint8_t> data = {};
 };
+
+enum class AddressMode {
+    Clamp,
+    Repeat
+};
+
+enum class FilterMode {
+    Nearest,
+    Bilinear
+};
+
+struct Sampler {
+    AddressMode address_mode = AddressMode::Clamp;
+    FilterMode filter_mode = FilterMode::Nearest;
+
+    TGAColor sample(const TGAImage& texture, double u, double v) const;
+};

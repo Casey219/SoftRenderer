@@ -71,8 +71,8 @@ vec4 Model::normal(const int iface, const int nthvert) const {
     return norms[facet_nrm[iface * 3 + nthvert]];
 }
 
-vec4 Model::normal(const vec2& uv) const {
-    TGAColor c = normalmap.get(uv[0] * normalmap.width(), uv[1] * normalmap.height());
+vec4 Model::normal(const vec2& uv, const Sampler& sampler) const {
+    TGAColor c = sampler.sample(normalmap, uv.x, uv.y);
     return normalized(vec4{ (double)c[2],(double)c[1],(double)c[0],0 }*2. / 255. - vec4{ 1,1,1,0 });
 }
 
@@ -82,4 +82,3 @@ vec2 Model::uv(const int iface, const int nthvert) const {
 
 const TGAImage& Model::diffuse()  const { return diffusemap; }
 const TGAImage& Model::specular() const { return specularmap; }
-

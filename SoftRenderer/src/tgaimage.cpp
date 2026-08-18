@@ -1,6 +1,36 @@
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <cstring>
 #include "tgaimage.h"
+
+namespace {
+double address_uv(const double coordinate, const AddressMode mode) {
+    if (mode == AddressMode::Clamp)
+        return std::clamp(coordinate, 0., 1.);
+    return coordinate - std::floor(coordinate);
+}
+
+int address_texel(const int coordinate, const int size, const AddressMode mode) {
+    if (mode == AddressMode::Clamp)
+        return std::clamp(coordinate, 0, size - 1);
+    return (coordinate % size + size) % size;
+}
+
+TGAColor lerp_color(const TGAColor& c00, const TGAColor& c10,
+                    const TGAColor& c01, const TGAColor& c11,
+                    const double tx, const double ty) {
+    TGAColor result;
+    result.bytespp = c00.bytespp;
+    for (int channel = 0; channel < result.bytespp; ++channel) {
+        const double top = c00[channel] * (1. - tx) + c10[channel] * tx;
+        const double bottom = c01[channel] * (1. - tx) + c11[channel] * tx;
+        const double value = top * (1. - ty) + bottom * ty;
+        result[channel] = static_cast<std::uint8_t>(std::clamp(std::lround(value), 0l, 255l));
+    }
+    return result;
+}
+} // namespace
 
 TGAImage::TGAImage(const int w, const int h, const int bpp, TGAColor c) : w(w), h(h), bpp(bpp), data(w* h* bpp, 0) {
     for (int j = 0; j < h; j++)
@@ -206,4 +236,40 @@ int TGAImage::width() const {
 
 int TGAImage::height() const {
     return h;
+}
+
+TGAColor Sampler::sample(const TGAImage& texture, const double u, const double v) const {
+    if (texture.width() <= 0 || texture.height() <= 0 ||
+        !std::isfinite(u) || !std::isfinite(v)) return {};
+
+    const double addressed_u = address_uv(u, address_mode);
+    const double addressed_v = address_uv(v, address_mode);
+
+    if (filter_mode == FilterMode::Nearest) {
+        const int x = address_texel(static_cast<int>(std::floor(addressed_u * texture.width())),
+                                    texture.width(), address_mode);
+        const int y = address_texel(static_cast<int>(std::floor(addressed_v * texture.height())),
+                                    texture.height(), address_mode);
+        return texture.get(x, y);
+    }
+
+    const double x = addressed_u * texture.width() - .5;
+    const double y = addressed_v * texture.height() - .5;
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const int x1 = x0 + 1;
+    const int y1 = y0 + 1;
+    const double tx = x - std::floor(x);
+    const double ty = y - std::floor(y);
+
+    return lerp_color(
+        texture.get(address_texel(x0, texture.width(), address_mode),
+                    address_texel(y0, texture.height(), address_mode)),
+        texture.get(address_texel(x1, texture.width(), address_mode),
+                    address_texel(y0, texture.height(), address_mode)),
+        texture.get(address_texel(x0, texture.width(), address_mode),
+                    address_texel(y1, texture.height(), address_mode)),
+        texture.get(address_texel(x1, texture.width(), address_mode),
+                    address_texel(y1, texture.height(), address_mode)),
+        tx, ty);
 }

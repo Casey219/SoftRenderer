@@ -25,6 +25,7 @@ struct BlankShader : Shader {
 struct BlinnPhongShader : Shader {
     const Model& model;
     vec4 l;              
+    Sampler sampler = { AddressMode::Repeat, FilterMode::Bilinear };
 
     BlinnPhongShader(const vec3 light, const Model& m) : model(m) {
         l = normalized((ModelView * vec4{ light.x, light.y, light.z, 0. })); 
@@ -50,7 +51,7 @@ struct BlinnPhongShader : Shader {
                       normalized(triangle[0].normal * bc[0] + triangle[1].normal * bc[1] + triangle[2].normal * bc[2]),
                       {0,0,0,1} }; 
         vec2 uv = triangle[0].uv * bc[0] + triangle[1].uv * bc[1] + triangle[2].uv * bc[2];
-        vec4 n = normalized(D.transpose() * model.normal(uv));
+        vec4 n = normalized(D.transpose() * model.normal(uv, sampler));
 
         // Blinn-Phong
         vec4 viewDir = vec4{0.0, 0.0, 1.0, 0.0}; 
@@ -58,8 +59,8 @@ struct BlinnPhongShader : Shader {
 
         double ambient = 0.4;                                 
         double diffuse = 1.0 * std::max(0., n * l);                 
-        double specular = (1.0 + 3.0 * sample2D(model.specular(), uv)[0] / 255.0) * std::pow(std::max(0.0, n * h), 35); // Blinn-Phong specular
-        TGAColor gl_FragColor = sample2D(model.diffuse(), uv);
+        double specular = (1.0 + 3.0 * sampler.sample(model.specular(), uv.x, uv.y)[0] / 255.0) * std::pow(std::max(0.0, n * h), 35); // Blinn-Phong specular
+        TGAColor gl_FragColor = sampler.sample(model.diffuse(), uv.x, uv.y);
         //      TGAColor gl_FragColor = {255, 255, 255, 255};
         for (int channel : {0, 1, 2})
             gl_FragColor[channel] = std::min<int>(255, gl_FragColor[channel] * (ambient + diffuse + specular));

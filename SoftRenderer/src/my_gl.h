@@ -19,9 +19,6 @@ struct VertexOut {
 using Triangle = std::array<VertexOut, 3>;
 
 struct Shader {
-    static TGAColor sample2D(const TGAImage& img, const vec2& uvf) {
-        return img.get(uvf[0] * img.width(), uvf[1] * img.height());
-    }
     virtual ~Shader() = default;
     virtual VertexOut vertex(const int face, const int vert) = 0;
     virtual std::pair<bool, TGAColor> fragment(const vec3 bc, const Triangle& triangle) const = 0;
