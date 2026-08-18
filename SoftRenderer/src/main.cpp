@@ -23,7 +23,7 @@ struct BlankShader : Shader {
 struct BlinnPhongShader : Shader {
     const Model& model;
     vec4 l;              
-	vec2 varying_uv[3];  // 三角形的uv坐标，由顶点着色器写入，片段着色器读取
+	vec2 varying_uv[3];  // 三角形的uv坐标，由顶点着色器写入，片段着色器读取 varying表示插值
     vec4 varying_nrm[3]; // 每个顶点的法线，由片元着色器插值
 	vec4 tri[3];         // 三角形的三个顶点在视图坐标
 
@@ -109,8 +109,8 @@ int main(int argc, char** argv) {
     double far = 100.0; // 远裁剪面（
     
     lookat(eye, center, up);
-    init_perspective(norm(eye - center));
-	//init_perspective(fovy, aspect, near, far);
+    //init_perspective(norm(eye - center));
+	init_perspective(fovy, aspect, near, far);
     init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8);
     init_zbuffer(width, height);
     TGAImage framebuffer(width, height, TGAImage::RGB, { 177, 195, 209, 255 });
@@ -133,9 +133,10 @@ int main(int argc, char** argv) {
     std::vector<double> zbuffer_copy = zbuffer;
     mat<4, 4> M = (Viewport * Perspective * ModelView).invert();
 
-    { // 阴影渲染pass
+    { // 光源空间渲染pass
         lookat(light, center, up);
-        init_perspective(norm(eye - center));
+        //init_perspective(norm(eye - center));
+        init_perspective(fovy, aspect, near, far);
         init_viewport(shadoww / 16, shadowh / 16, shadoww * 7 / 8, shadowh * 7 / 8);
         init_zbuffer(shadoww, shadowh);
         TGAImage trash(shadoww, shadowh, TGAImage::RGB, { 177, 195, 209, 255 });
@@ -161,13 +162,38 @@ int main(int argc, char** argv) {
     //后处理
     for (int x = 0; x < width; x++) {
         for (int y = 0; y < height; y++) {
-            vec4 fragment = M * vec4{ (double)x, (double)y, zbuffer_copy[x + y * width], 1. };
+            //vec4 fragment = M * vec4{ (double)x, (double)y, zbuffer_copy[x + y * width], 1. };
+            //vec4 q = N * fragment;
+            //vec3 p = q.xyz() / q.w;
+            //bool lit = (fragment.z >0.99 ||                                   // 背景
+            ////bool lit = (fragment.z < -100 ||                                   // 背景
+            //    (p.x < 0 || p.x >= shadoww || p.y < 0 || p.y >= shadowh) // 超出阴影贴图范围
+            //    ||  (p.z > zbuffer[int(p.x) + int(p.y) * shadoww] - .005));  // 可见
+            //mask[x + y * width] = lit;
+            // 1. 修改背景判断标准：直接判断原始 zbuffer 值
+            double z_val = zbuffer_copy[x + y * width];
+            if (z_val > 0.99) { // 如果 z 是初始化值 1.0，说明是背景
+                mask[x + y * width] = true;
+                continue;
+            }
+
+            // 2. 还原坐标
+            vec4 fragment = M * vec4{ (double)x, (double)y, z_val, 1. };
             vec4 q = N * fragment;
-            vec3 p = q.xyz() / q.w;
-            bool lit = (fragment.z < -100 ||                                   // 背景
-				(p.x < 0 || p.x >= shadoww || p.y < 0 || p.y >= shadowh) ||   // 超出阴影贴图范围
-                (p.z > zbuffer[int(p.x) + int(p.y) * shadoww] - .03));  // 可见
-            mask[x + y * width] = lit;
+            vec3 p = q.xyz() / q.w; // 映射到光源视角的屏幕坐标
+            if ((p.x < 0 || p.x >= shadoww || p.y < 0 || p.y >= shadowh)) {
+                mask[x + y * width] = true; // 超出阴影贴图范围，认为在光照下
+				continue;
+            }
+            // 3. 阴影判定 (此时 z 越小越近)
+            // 如果当前深度 p.z 明显大于 阴影贴图深度，则在阴影中 (mask = false)
+            // 这里的 bias 应设为正数，例如 +0.005
+            bool in_shadow = (p.z > zbuffer[int(p.x) + int(p.y) * shadoww] + .005);
+            //bool in_shadow = (p.z > zbuffer[int(p.x) + int(p.y) * shadoww] );
+
+            mask[x + y * width] = !in_shadow;
+            
+
         }
     }
 

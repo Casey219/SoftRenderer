@@ -5,17 +5,17 @@ mat<4, 4> ModelView, Viewport, Perspective;
 std::vector<double> zbuffer;               // 深度缓冲
 
 void lookat(const vec3 eye, const vec3 center, const vec3 up) {
-    vec3 n = normalized(eye - center);
-    vec3 l = normalized(cross(up, n));
-    vec3 m = normalized(cross(n, l));
-    ModelView = mat<4, 4>{ {{l.x,l.y,l.z,0}, {m.x,m.y,m.z,0}, {n.x,n.y,n.z,0}, {0,0,0,1}} } *
+    vec3 g = normalized(center - eye);
+    vec3 r = normalized(cross(g, up));
+    vec3 t = normalized(cross(r, g));
+    ModelView = mat<4, 4>{ {{r.x,r.y,r.z,0}, {t.x,t.y,t.z,0}, {-g.x,-g.y,-g.z,0}, {0,0,0,1}} } *
         mat<4, 4>{{{1, 0, 0, -eye.x}, { 0,1,0,-eye.y }, { 0,0,1,-eye.z }, { 0,0,0,1 }}};
         //mat<4, 4>{{{1, 0, 0, -center.x}, { 0,1,0,-center.y }, { 0,0,1,-center.z }, { 0,0,0,1 }}};
 }
 
-void init_perspective(const double f) {
-    Perspective = { {{1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0, -1 / f,1}} };
-}
+//void init_perspective(const double f) {
+//    Perspective = { {{1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0, -1 / f,1}} };
+//}
 
 void init_perspective(double fovy, double aspect, double near, double far) {
     double tanHalfFovy = std::tan(fovy / 2.0);
@@ -34,8 +34,8 @@ void init_viewport(const int x, const int y, const int w, const int h) {
 
 void init_zbuffer(const int width, const int height) {
     //zbuffer = std::vector(width * height, -1.);
-    //zbuffer = std::vector(width * height, 1.);
-    zbuffer = std::vector(width * height, -1000.);
+    zbuffer = std::vector(width * height, 1.);
+    //zbuffer = std::vector(width * height, -1000.);
 }
 
 void rasterize(const Triangle& clip, const Shader& shader, TGAImage& framebuffer) {
@@ -55,8 +55,8 @@ void rasterize(const Triangle& clip, const Shader& shader, TGAImage& framebuffer
             bc_clip = bc_clip / (bc_clip.x + bc_clip.y + bc_clip.z);
             if (bc_screen.x < 0 || bc_screen.y < 0 || bc_screen.z < 0) continue;  // 负的重心坐标说明像素不在三角形中
             double z = bc_screen * vec3{ ndc[0].z, ndc[1].z, ndc[2].z };  // 深度的线性插值
-            //if (z >= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
-            if (z <= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
+            if (z >= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
+            //if (z <= zbuffer[x + y * framebuffer.width()]) continue;   // z-buffer深度测试
             auto [discard, color] = shader.fragment(bc_clip);
             if (discard) continue;                                 // fragment shader可以丢弃当前fragment
             zbuffer[x + y * framebuffer.width()] = z;                 
