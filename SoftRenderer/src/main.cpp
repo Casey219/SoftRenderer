@@ -26,18 +26,22 @@ struct BlankShader : Shader {
 struct BlinnPhongShader : Shader {
     const Model& model;
     const ShadowMap& shadow_map;
-    vec4 l;              
+    vec4 l;
+    vec4 light_world_direction;
     Sampler sampler = { AddressMode::Repeat, FilterMode::Bilinear };
+    ShadowBiasSettings shadow_bias_settings = {};
 
     BlinnPhongShader(const vec3 light, const Model& m, const ShadowMap& shadow)
         : model(m), shadow_map(shadow) {
-        l = normalized((ModelView * vec4{ light.x, light.y, light.z, 0. })); 
+        light_world_direction = normalized(vec4{ light.x, light.y, light.z, 0. });
+        l = normalized(ModelView * light_world_direction);
     }
 
     virtual VertexOut vertex(const int face, const int vert) override {
         VertexOut output;
         output.uv = model.uv(face, vert);
-        output.normal = ModelView.invert_transpose() * model.normal(face, vert);
+        output.world_normal = model.normal(face, vert);
+        output.normal = ModelView.invert_transpose() * output.world_normal;
         output.world_position = model.vert(face, vert);
         output.view_position = ModelView * output.world_position;
         output.clip_position = Perspective * output.view_position;
@@ -50,12 +54,20 @@ struct BlinnPhongShader : Shader {
         mat<2, 2> U = { triangle[1].uv - triangle[0].uv,
                         triangle[2].uv - triangle[0].uv };
         mat<2, 4> T = U.invert() * E;
+        const vec4 geometric_normal = normalized(
+            triangle[0].normal * bc[0] +
+            triangle[1].normal * bc[1] +
+            triangle[2].normal * bc[2]);
+        const vec4 world_geometric_normal = normalized(
+            triangle[0].world_normal * bc[0] +
+            triangle[1].world_normal * bc[1] +
+            triangle[2].world_normal * bc[2]);
         mat<4, 4> D = { normalized(T[0]),  // tangent
                       normalized(T[1]),  // bitangent
-                      normalized(triangle[0].normal * bc[0] + triangle[1].normal * bc[1] + triangle[2].normal * bc[2]),
+                      geometric_normal,
                       {0,0,0,1} }; 
         vec2 uv = triangle[0].uv * bc[0] + triangle[1].uv * bc[1] + triangle[2].uv * bc[2];
-        vec4 n = normalized(D.transpose() * model.normal(uv, sampler));
+        vec4 shading_normal = normalized(D.transpose() * model.normal(uv, sampler));
         vec4 world_position = triangle[0].world_position * bc[0] +
                               triangle[1].world_position * bc[1] +
                               triangle[2].world_position * bc[2];
@@ -64,13 +76,17 @@ struct BlinnPhongShader : Shader {
         vec4 viewDir = vec4{0.0, 0.0, 1.0, 0.0}; 
 		vec4 h = normalized(l + viewDir);    // 半程向量
 
-        const double ndotl = std::max(0., n * l);
-        const double shadow_bias = 0.002;
-        //const double shadow_bias = std::max(0.0005, 0.003 * (1. - ndotl));
-        const double visibility = shadow_map.visibility(world_position, shadow_bias, 1);
+        const double geometric_ndotl = std::max(0., geometric_normal * l);
+        const double shadow_bias = shadow_map.depth_bias(geometric_ndotl, shadow_bias_settings);
+        const double normal_orientation = world_geometric_normal * light_world_direction >= 0. ? 1. : -1.;
+        const vec4 shadow_position = world_position + world_geometric_normal *
+            (normal_orientation * shadow_map.world_units_per_texel *
+             shadow_bias_settings.normal_offset_texels);
+        const double visibility = shadow_map.visibility(shadow_position, shadow_bias, 1);
+        const double ndotl = std::max(0., shading_normal * l);
         double ambient = 0.4;
         double diffuse = visibility * ndotl;
-        double specular = (1.0 + 3.0 * sampler.sample(model.specular(), uv.x, uv.y)[0] / 255.0) * std::pow(std::max(0.0, n * h), 35); // Blinn-Phong specular
+        double specular = (1.0 + 3.0 * sampler.sample(model.specular(), uv.x, uv.y)[0] / 255.0) * std::pow(std::max(0.0, shading_normal * h), 35); // Blinn-Phong specular
         specular *= visibility;
         TGAColor gl_FragColor = sampler.sample(model.diffuse(), uv.x, uv.y);
         //      TGAColor gl_FragColor = {255, 255, 255, 255};
@@ -151,6 +167,10 @@ int main(int argc, char** argv) {
         ModelView = light_frustum.view;
         Perspective = light_frustum.projection;
         shadow_map.light_clip_from_world = Perspective * ModelView;
+        shadow_map.world_units_per_texel = std::max(
+            (light_frustum.right - light_frustum.left) / shadow_width,
+            (light_frustum.top - light_frustum.bottom) / shadow_height);
+        shadow_map.depth_range = light_frustum.far_plane - light_frustum.near_plane;
         init_viewport(0, 0, shadow_width, shadow_height);
         init_zbuffer(shadow_width, shadow_height);
         TGAImage depth_target(shadow_width, shadow_height, TGAImage::GRAYSCALE);

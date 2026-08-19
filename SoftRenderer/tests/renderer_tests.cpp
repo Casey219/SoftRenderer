@@ -10,6 +10,7 @@ VertexOut make_vertex(const vec4 position, const vec2 uv = {}) {
     VertexOut vertex;
     vertex.clip_position = position;
     vertex.view_position = position;
+    vertex.world_normal = { 0., 0., 1., 0. };
     vertex.normal = { 0., 0., 1., 0. };
     vertex.uv = uv;
     return vertex;
@@ -201,6 +202,9 @@ int main() {
     translated_bounds.expand({ 20., 40., 60. });
     const DirectionalLightFrustum fitted =
         fit_directional_light({ 1., 2., 3. }, translated_bounds, 0.1);
+    passed &= expect(fitted.right > fitted.left && fitted.top > fitted.bottom &&
+                     fitted.far_plane > fitted.near_plane,
+                     "a fitted directional light frustum must expose valid dimensions");
     for (const vec3& corner : translated_bounds.corners()) {
         const vec4 clip = fitted.projection * fitted.view *
                           vec4{ corner.x, corner.y, corner.z, 1. };
@@ -217,6 +221,21 @@ int main() {
                             vec4{ point.x, point.y, point.z, 1. };
     passed &= expect(inside_clip_volume(point_clip),
                      "a degenerate point AABB and vertical light direction must produce a valid frustum");
+
+    ShadowMap bias_map;
+    bias_map.world_units_per_texel = 0.002;
+    bias_map.depth_range = 4.;
+    const ShadowBiasSettings bias_settings;
+    const double frontal_bias = bias_map.depth_bias(1., bias_settings);
+    const double grazing_bias = bias_map.depth_bias(0.5, bias_settings);
+    passed &= expect(almost_equal(frontal_bias, 0.0005),
+                     "frontal shadow bias must convert texel-sized world bias to NDC depth");
+    passed &= expect(grazing_bias > frontal_bias,
+                     "grazing surfaces must receive a larger slope-scaled shadow bias");
+
+    bias_map.world_units_per_texel = 0.001;
+    passed &= expect(almost_equal(bias_map.depth_bias(1., bias_settings), frontal_bias * 0.5),
+                     "shadow bias must scale with the world size of a shadow texel");
 
     if (!passed) return 1;
     std::cout << "All renderer tests passed.\n";

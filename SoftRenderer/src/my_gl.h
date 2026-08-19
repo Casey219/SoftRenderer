@@ -14,6 +14,7 @@ struct VertexOut {
     vec4 clip_position = {};
     vec4 world_position = {};
     vec4 view_position = {};
+    vec4 world_normal = {};
     vec4 normal = {};
     vec2 uv = {};
 };
@@ -33,18 +34,34 @@ struct AABB {
 struct DirectionalLightFrustum {
     mat<4, 4> view = {};
     mat<4, 4> projection = {};
+    double left = 0.;
+    double right = 0.;
+    double bottom = 0.;
+    double top = 0.;
+    double near_plane = 0.;
+    double far_plane = 0.;
 };
 
 DirectionalLightFrustum fit_directional_light(const vec3& light_direction,
                                                const AABB& world_bounds,
                                                double padding_ratio = 0.1);
 
+struct ShadowBiasSettings {
+    double constant_texels = 0.5;
+    double slope_scale_texels = 1.0;
+    double maximum_slope = 4.0;
+    double normal_offset_texels = 0.25;
+};
+
 struct ShadowMap {
     int width = 0;
     int height = 0;
     std::vector<double> depth = {};
     mat<4, 4> light_clip_from_world = {};
+    double world_units_per_texel = 0.;
+    double depth_range = 0.;
 
+    double depth_bias(double geometric_ndotl, const ShadowBiasSettings& settings) const;
     double visibility(const vec4& world_position, double bias, int pcf_radius = 1) const;
 };
 

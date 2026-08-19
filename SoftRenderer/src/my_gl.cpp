@@ -125,12 +125,15 @@ DirectionalLightFrustum fit_directional_light(const vec3& light_direction,
     const double pad_x = std::max((light_max.x - light_min.x) * padding, minimum_extent);
     const double pad_y = std::max((light_max.y - light_min.y) * padding, minimum_extent);
     const double pad_z = std::max((light_max.z - light_min.z) * padding, minimum_extent);
-    const double near_plane = std::max(-light_max.z - pad_z, minimum_extent);
-    const double far_plane = std::max(-light_min.z + pad_z, near_plane + minimum_extent);
-
-    result.projection = make_orthographic(light_min.x - pad_x, light_max.x + pad_x,
-                                          light_min.y - pad_y, light_max.y + pad_y,
-                                          near_plane, far_plane);
+    result.left = light_min.x - pad_x;
+    result.right = light_max.x + pad_x;
+    result.bottom = light_min.y - pad_y;
+    result.top = light_max.y + pad_y;
+    result.near_plane = std::max(-light_max.z - pad_z, minimum_extent);
+    result.far_plane = std::max(-light_min.z + pad_z, result.near_plane + minimum_extent);
+    result.projection = make_orthographic(result.left, result.right,
+                                          result.bottom, result.top,
+                                          result.near_plane, result.far_plane);
     return result;
 }
 
@@ -143,6 +146,7 @@ VertexOut interpolate(const VertexOut& from, const VertexOut& to, const double t
     result.clip_position = from.clip_position + (to.clip_position - from.clip_position) * t;
     result.world_position = from.world_position + (to.world_position - from.world_position) * t;
     result.view_position = from.view_position + (to.view_position - from.view_position) * t;
+    result.world_normal = from.world_normal + (to.world_normal - from.world_normal) * t;
     result.normal = from.normal + (to.normal - from.normal) * t;
     result.uv = from.uv + (to.uv - from.uv) * t;
     return result;
@@ -255,6 +259,20 @@ void rasterize_clipped_triangle(const Triangle& clip, const Shader& shader, TGAI
     }
 }
 } // namespace
+
+double ShadowMap::depth_bias(const double geometric_ndotl,
+                             const ShadowBiasSettings& settings) const {
+    if (world_units_per_texel <= 0. || depth_range <= clip_epsilon) return 0.;
+
+    const double cosine = std::clamp(geometric_ndotl, 0., 1.);
+    const double sine = std::sqrt(std::max(0., 1. - cosine * cosine));
+    const double slope = std::min(sine / std::max(cosine, 0.1),
+                                  std::max(settings.maximum_slope, 0.));
+    const double world_bias = world_units_per_texel *
+        (std::max(settings.constant_texels, 0.) +
+         std::max(settings.slope_scale_texels, 0.) * slope);
+    return 2. * world_bias / depth_range;
+}
 
 double ShadowMap::visibility(const vec4& world_position, const double bias, const int pcf_radius) const {
     if (width <= 0 || height <= 0 || depth.size() != static_cast<std::size_t>(width * height))
