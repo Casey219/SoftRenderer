@@ -20,6 +20,25 @@ struct VertexOut {
 
 using Triangle = std::array<VertexOut, 3>;
 
+struct AABB {
+    vec3 minimum = {};
+    vec3 maximum = {};
+    bool valid = false;
+
+    void expand(const vec3& point);
+    vec3 center() const;
+    std::array<vec3, 8> corners() const;
+};
+
+struct DirectionalLightFrustum {
+    mat<4, 4> view = {};
+    mat<4, 4> projection = {};
+};
+
+DirectionalLightFrustum fit_directional_light(const vec3& light_direction,
+                                               const AABB& world_bounds,
+                                               double padding_ratio = 0.1);
+
 struct ShadowMap {
     int width = 0;
     int height = 0;

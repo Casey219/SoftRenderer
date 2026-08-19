@@ -4,13 +4,32 @@
 mat<4, 4> ModelView, Viewport, Perspective; 
 std::vector<double> zbuffer;               // 深度缓冲
 
-void lookat(const vec3 eye, const vec3 center, const vec3 up) {
-    vec3 g = normalized(center - eye);
-    vec3 r = normalized(cross(g, up));
-    vec3 t = normalized(cross(r, g));
-    ModelView = mat<4, 4>{ {{r.x,r.y,r.z,0}, {t.x,t.y,t.z,0}, {-g.x,-g.y,-g.z,0}, {0,0,0,1}} } *
+namespace {
+mat<4, 4> make_lookat(const vec3 eye, const vec3 center, const vec3 up) {
+    const vec3 g = normalized(center - eye);
+    const vec3 r = normalized(cross(g, up));
+    const vec3 t = normalized(cross(r, g));
+    return mat<4, 4>{ {{r.x,r.y,r.z,0}, {t.x,t.y,t.z,0}, {-g.x,-g.y,-g.z,0}, {0,0,0,1}} } *
         mat<4, 4>{{{1, 0, 0, -eye.x}, { 0,1,0,-eye.y }, { 0,0,1,-eye.z }, { 0,0,0,1 }}};
-        //mat<4, 4>{{{1, 0, 0, -center.x}, { 0,1,0,-center.y }, { 0,0,1,-center.z }, { 0,0,0,1 }}};
+}
+
+mat<4, 4> make_orthographic(const double left, const double right,
+                            const double bottom, const double top,
+                            const double near, const double far) {
+    mat<4, 4> result = { 0 };
+    result[0][0] = 2. / (right - left);
+    result[1][1] = 2. / (top - bottom);
+    result[2][2] = -2. / (far - near);
+    result[0][3] = -(right + left) / (right - left);
+    result[1][3] = -(top + bottom) / (top - bottom);
+    result[2][3] = -(far + near) / (far - near);
+    result[3][3] = 1.;
+    return result;
+}
+} // namespace
+
+void lookat(const vec3 eye, const vec3 center, const vec3 up) {
+    ModelView = make_lookat(eye, center, up);
 }
 
 //void init_perspective(const double f) {
@@ -31,14 +50,7 @@ void init_perspective(double fovy, double aspect, double near, double far) {
 void init_orthographic(const double left, const double right,
                        const double bottom, const double top,
                        const double near, const double far) {
-    Perspective = mat<4, 4>{ 0 };
-    Perspective[0][0] = 2. / (right - left);
-    Perspective[1][1] = 2. / (top - bottom);
-    Perspective[2][2] = -2. / (far - near);
-    Perspective[0][3] = -(right + left) / (right - left);
-    Perspective[1][3] = -(top + bottom) / (top - bottom);
-    Perspective[2][3] = -(far + near) / (far - near);
-    Perspective[3][3] = 1.;
+    Perspective = make_orthographic(left, right, bottom, top, near, far);
 }
 
 void init_viewport(const int x, const int y, const int w, const int h) {
@@ -49,6 +61,77 @@ void init_zbuffer(const int width, const int height) {
     //zbuffer = std::vector(width * height, -1.);
     zbuffer = std::vector(width * height, 1.);
     //zbuffer = std::vector(width * height, -1000.);
+}
+
+void AABB::expand(const vec3& point) {
+    if (!valid) {
+        minimum = maximum = point;
+        valid = true;
+        return;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        minimum[axis] = std::min(minimum[axis], point[axis]);
+        maximum[axis] = std::max(maximum[axis], point[axis]);
+    }
+}
+
+vec3 AABB::center() const {
+    return (minimum + maximum) * .5;
+}
+
+std::array<vec3, 8> AABB::corners() const {
+    std::array<vec3, 8> result = {};
+    for (int corner = 0; corner < 8; ++corner) {
+        result[corner] = {
+            corner & 1 ? maximum.x : minimum.x,
+            corner & 2 ? maximum.y : minimum.y,
+            corner & 4 ? maximum.z : minimum.z
+        };
+    }
+    return result;
+}
+
+DirectionalLightFrustum fit_directional_light(const vec3& light_direction,
+                                               const AABB& world_bounds,
+                                               const double padding_ratio) {
+    DirectionalLightFrustum result;
+    if (!world_bounds.valid) return result;
+
+    constexpr double minimum_extent = 1e-3;
+    const double direction_length = norm(light_direction);
+    const vec3 direction = direction_length > minimum_extent
+        ? light_direction / direction_length
+        : vec3{ 0., 1., 0. };
+    const vec3 bounds_center = world_bounds.center();
+    const double radius = norm(world_bounds.maximum - world_bounds.minimum) * .5;
+    const vec3 eye = bounds_center + direction * (radius + 1.);
+    const vec3 preferred_up = std::abs(direction * vec3{ 0., 1., 0. }) > .99
+        ? vec3{ 0., 0., 1. }
+        : vec3{ 0., 1., 0. };
+    result.view = make_lookat(eye, bounds_center, preferred_up);
+
+    const auto corners = world_bounds.corners();
+    vec3 light_min = (result.view * vec4{ corners[0].x, corners[0].y, corners[0].z, 1. }).xyz();
+    vec3 light_max = light_min;
+    for (std::size_t i = 1; i < corners.size(); ++i) {
+        const vec3 point = (result.view * vec4{ corners[i].x, corners[i].y, corners[i].z, 1. }).xyz();
+        for (int axis = 0; axis < 3; ++axis) {
+            light_min[axis] = std::min(light_min[axis], point[axis]);
+            light_max[axis] = std::max(light_max[axis], point[axis]);
+        }
+    }
+
+    const double padding = std::max(padding_ratio, 0.);
+    const double pad_x = std::max((light_max.x - light_min.x) * padding, minimum_extent);
+    const double pad_y = std::max((light_max.y - light_min.y) * padding, minimum_extent);
+    const double pad_z = std::max((light_max.z - light_min.z) * padding, minimum_extent);
+    const double near_plane = std::max(-light_max.z - pad_z, minimum_extent);
+    const double far_plane = std::max(-light_min.z + pad_z, near_plane + minimum_extent);
+
+    result.projection = make_orthographic(light_min.x - pad_x, light_max.x + pad_x,
+                                          light_min.y - pad_y, light_max.y + pad_y,
+                                          near_plane, far_plane);
+    return result;
 }
 
 namespace {

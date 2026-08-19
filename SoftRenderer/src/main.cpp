@@ -65,7 +65,8 @@ struct BlinnPhongShader : Shader {
 		vec4 h = normalized(l + viewDir);    // 半程向量
 
         const double ndotl = std::max(0., n * l);
-        const double shadow_bias = std::max(0.0005, 0.003 * (1. - ndotl));
+        const double shadow_bias = 0.002;
+        //const double shadow_bias = std::max(0.0005, 0.003 * (1. - ndotl));
         const double visibility = shadow_map.visibility(world_position, shadow_bias, 1);
         double ambient = 0.4;
         double diffuse = visibility * ndotl;
@@ -131,14 +132,24 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i)
         models.emplace_back(argv[i]);
 
+    AABB scene_bounds;
+    for (const Model& model : models)
+        for (int vertex = 0; vertex < model.nverts(); ++vertex)
+            scene_bounds.expand(model.vert(vertex).xyz());
+    if (!scene_bounds.valid) {
+        std::cerr << "Error: no vertices were loaded" << std::endl;
+        return 1;
+    }
+
     ShadowMap shadow_map;
     shadow_map.width = shadow_width;
     shadow_map.height = shadow_height;
 
     { // 方向光深度 pass
-        const vec3 light_eye = center + normalized(light_direction) * 4.;
-        lookat(light_eye, center, up);
-        init_orthographic(-2., 2., -2., 2., .1, 8.);
+        const DirectionalLightFrustum light_frustum =
+            fit_directional_light(light_direction, scene_bounds, 0.1);
+        ModelView = light_frustum.view;
+        Perspective = light_frustum.projection;
         shadow_map.light_clip_from_world = Perspective * ModelView;
         init_viewport(0, 0, shadow_width, shadow_height);
         init_zbuffer(shadow_width, shadow_height);

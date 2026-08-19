@@ -196,6 +196,28 @@ int main() {
     passed &= expect(almost_equal(shadow_map.visibility({ 0., 0., 0.5, 1. }, 0., 1), 0.75),
                      "3x3 PCF must average the valid neighboring shadow samples");
 
+    AABB translated_bounds;
+    translated_bounds.expand({ -12., 4., 18. });
+    translated_bounds.expand({ 20., 40., 60. });
+    const DirectionalLightFrustum fitted =
+        fit_directional_light({ 1., 2., 3. }, translated_bounds, 0.1);
+    for (const vec3& corner : translated_bounds.corners()) {
+        const vec4 clip = fitted.projection * fitted.view *
+                          vec4{ corner.x, corner.y, corner.z, 1. };
+        passed &= expect(inside_clip_volume(clip),
+                         "a translated and scaled scene AABB corner must fit the light frustum");
+    }
+
+    AABB point_bounds;
+    point_bounds.expand({ 100., -50., 25. });
+    const DirectionalLightFrustum point_fitted =
+        fit_directional_light({ 0., 1., 0. }, point_bounds, 0.1);
+    const vec3 point = point_bounds.center();
+    const vec4 point_clip = point_fitted.projection * point_fitted.view *
+                            vec4{ point.x, point.y, point.z, 1. };
+    passed &= expect(inside_clip_volume(point_clip),
+                     "a degenerate point AABB and vertical light direction must produce a valid frustum");
+
     if (!passed) return 1;
     std::cout << "All renderer tests passed.\n";
     return 0;
