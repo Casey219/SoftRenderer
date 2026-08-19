@@ -2,6 +2,7 @@
 #include <cmath>
 #include <iostream>
 #include <cstring>
+#include <limits>
 #include "tgaimage.h"
 
 namespace {
@@ -32,7 +33,9 @@ TGAColor lerp_color(const TGAColor& c00, const TGAColor& c10,
 }
 } // namespace
 
-TGAImage::TGAImage(const int w, const int h, const int bpp, TGAColor c) : w(w), h(h), bpp(bpp), data(w* h* bpp, 0) {
+TGAImage::TGAImage(const int w, const int h, const int bpp, TGAColor c)
+    : w(w), h(h), bpp(static_cast<std::uint8_t>(bpp)),
+      data(static_cast<std::size_t>(w) * h * bpp, 0) {
     for (int j = 0; j < h; j++)
         for (int i = 0; i < w; i++)
             set(i, j, c);
@@ -91,12 +94,12 @@ bool TGAImage::load_rle_data(std::ifstream& in) {
     size_t currentbyte = 0;
     TGAColor colorbuffer;
     do {
-        std::uint8_t chunkheader = 0;
-        chunkheader = in.get();
-        if (!in.good()) {
+        const int header_value = in.get();
+        if (header_value == EOF) {
             std::cerr << "an error occured while reading the data\n";
             return false;
         }
+        std::uint8_t chunkheader = static_cast<std::uint8_t>(header_value);
         if (chunkheader < 128) {
             chunkheader++;
             for (int i = 0; i < chunkheader; i++) {
@@ -145,10 +148,16 @@ bool TGAImage::write_tga_file(const std::string filename, const bool vflip, cons
         std::cerr << "can't open file " << filename << "\n";
         return false;
     }
+    if (w <= 0 || h <= 0 ||
+        w > std::numeric_limits<std::uint16_t>::max() ||
+        h > std::numeric_limits<std::uint16_t>::max()) {
+        std::cerr << "image dimensions are outside the TGA format range\n";
+        return false;
+    }
     TGAHeader header = {};
-    header.bitsperpixel = bpp << 3;
-    header.width = w;
-    header.height = h;
+    header.bitsperpixel = static_cast<std::uint8_t>(bpp << 3);
+    header.width = static_cast<std::uint16_t>(w);
+    header.height = static_cast<std::uint16_t>(h);
     header.datatypecode = (bpp == GRAYSCALE ? (rle ? 11 : 3) : (rle ? 10 : 2));
     header.imagedescriptor = vflip ? 0x00 : 0x20; // top-left or bottom-left origin
     out.write(reinterpret_cast<const char*>(&header), sizeof(header));

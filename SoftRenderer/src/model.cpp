@@ -1,4 +1,5 @@
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include "model.h"
 
@@ -56,8 +57,16 @@ Model::Model(const std::string filename) {
     load_texture("_spec.tga", specularmap);
 }
 
-int Model::nverts() const { return verts.size(); }
-int Model::nfaces() const { return facet_vrt.size() / 3; }
+int Model::nverts() const {
+    assert(verts.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max()));
+    return static_cast<int>(verts.size());
+}
+
+int Model::nfaces() const {
+    const std::size_t count = facet_vrt.size() / 3;
+    assert(count <= static_cast<std::size_t>(std::numeric_limits<int>::max()));
+    return static_cast<int>(count);
+}
 
 vec4 Model::vert(const int i) const {
     return verts[i];
