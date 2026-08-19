@@ -1,6 +1,10 @@
 ﻿#include "my_gl.h"
 #include "model.h"
 #include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <filesystem>
+#include <string_view>
 
 extern mat<4, 4> Viewport, ModelView, Perspective; 
 extern std::vector<double> zbuffer;     
@@ -30,9 +34,12 @@ struct BlinnPhongShader : Shader {
     vec4 light_world_direction;
     Sampler sampler = { AddressMode::Repeat, FilterMode::Bilinear };
     ShadowBiasSettings shadow_bias_settings = {};
+    int shadow_pcf_radius = 1;
 
-    BlinnPhongShader(const vec3 light, const Model& m, const ShadowMap& shadow)
-        : model(m), shadow_map(shadow) {
+    BlinnPhongShader(const vec3 light, const Model& m, const ShadowMap& shadow,
+                     const ShadowBiasSettings& bias_settings, const int pcf_radius)
+        : model(m), shadow_map(shadow), shadow_bias_settings(bias_settings),
+          shadow_pcf_radius(pcf_radius) {
         light_world_direction = normalized(vec4{ light.x, light.y, light.z, 0. });
         l = normalized(ModelView * light_world_direction);
     }
@@ -82,7 +89,7 @@ struct BlinnPhongShader : Shader {
         const vec4 shadow_position = world_position + world_geometric_normal *
             (normal_orientation * shadow_map.world_units_per_texel *
              shadow_bias_settings.normal_offset_texels);
-        const double visibility = shadow_map.visibility(shadow_position, shadow_bias, 1);
+        const double visibility = shadow_map.visibility(shadow_position, shadow_bias, shadow_pcf_radius);
         const double ndotl = std::max(0., shading_normal * l);
         double ambient = 0.4;
         double diffuse = visibility * ndotl;
@@ -98,7 +105,106 @@ struct BlinnPhongShader : Shader {
     }
 };
 
-void drop_zbuffer(const std::string& filename, const std::vector<double>& depth, const int width, const int height) {
+struct RenderOptions {
+    int width = 800;
+    int height = 800;
+    int shadow_width = 2048;
+    int shadow_height = 2048;
+    int shadow_pcf_radius = 1;
+    ShadowBiasSettings shadow_bias = {};
+    std::filesystem::path output_directory = ".";
+    std::vector<std::string> model_paths = {};
+};
+
+void print_usage(const char* executable) {
+    std::cerr
+        << "Usage: " << executable << " [options] <model.obj> [more-models.obj ...]\n"
+        << "Options:\n"
+        << "  --size <width>x<height>          Framebuffer resolution (default: 800x800)\n"
+        << "  --shadow-size <width>x<height>   Shadow-map resolution (default: 2048x2048)\n"
+        << "  --output <directory>             Output directory (default: current directory)\n"
+        << "  --pcf-radius <0-8>               PCF filter radius (default: 1)\n"
+        << "  --bias-constant <texels>         Constant shadow bias (default: 0.5)\n"
+        << "  --bias-slope <texels>            Slope-scaled shadow bias (default: 1.0)\n"
+        << "  --bias-max-slope <value>         Maximum shadow bias slope (default: 4.0)\n"
+        << "  --normal-offset <texels>         Normal offset for shadow lookup (default: 0.25)\n"
+        << "  --help                           Show this message\n";
+}
+
+bool parse_positive_int(const std::string_view text, int& value) {
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} && end == text.data() + text.size() && value > 0;
+}
+
+bool parse_non_negative_int(const std::string_view text, int& value) {
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} && end == text.data() + text.size() && value >= 0;
+}
+
+bool parse_non_negative_double(const std::string_view text, double& value) {
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} && end == text.data() + text.size() &&
+           std::isfinite(value) && value >= 0.;
+}
+
+bool parse_dimensions(const std::string_view text, int& width, int& height) {
+    const std::size_t separator = text.find_first_of("xX");
+    if (separator == std::string_view::npos) return false;
+    return parse_positive_int(text.substr(0, separator), width) &&
+           parse_positive_int(text.substr(separator + 1), height);
+}
+
+// Returns 1 for success, 0 for --help, and -1 for an invalid invocation.
+int parse_options(const int argc, char** argv, RenderOptions& options) {
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view argument = argv[index];
+        if (argument == "--help" || argument == "-h") return 0;
+        if (argument.size() < 2 || argument[0] != '-' || argument[1] != '-') {
+            options.model_paths.emplace_back(argument);
+            continue;
+        }
+        if (++index == argc) {
+            std::cerr << "Error: missing value for " << argument << '\n';
+            return -1;
+        }
+
+        const std::string_view value = argv[index];
+        bool valid = false;
+        if (argument == "--size") {
+            valid = parse_dimensions(value, options.width, options.height);
+        } else if (argument == "--shadow-size") {
+            valid = parse_dimensions(value, options.shadow_width, options.shadow_height);
+        } else if (argument == "--output") {
+            options.output_directory = value;
+            valid = !options.output_directory.empty();
+        } else if (argument == "--pcf-radius") {
+            valid = parse_non_negative_int(value, options.shadow_pcf_radius) &&
+                    options.shadow_pcf_radius <= 8;
+        } else if (argument == "--bias-constant") {
+            valid = parse_non_negative_double(value, options.shadow_bias.constant_texels);
+        } else if (argument == "--bias-slope") {
+            valid = parse_non_negative_double(value, options.shadow_bias.slope_scale_texels);
+        } else if (argument == "--bias-max-slope") {
+            valid = parse_non_negative_double(value, options.shadow_bias.maximum_slope);
+        } else if (argument == "--normal-offset") {
+            valid = parse_non_negative_double(value, options.shadow_bias.normal_offset_texels);
+        } else {
+            std::cerr << "Error: unknown option " << argument << '\n';
+            return -1;
+        }
+        if (!valid) {
+            std::cerr << "Error: invalid value '" << value << "' for " << argument << '\n';
+            return -1;
+        }
+    }
+    if (options.model_paths.empty()) {
+        std::cerr << "Error: at least one OBJ model is required\n";
+        return -1;
+    }
+    return 1;
+}
+
+bool drop_zbuffer(const std::string& filename, const std::vector<double>& depth, const int width, const int height) {
     TGAImage zimg(width, height, TGAImage::GRAYSCALE, { 0,0,0,0 });
     double minz = 1.;
     double maxz = -1.;
@@ -111,8 +217,7 @@ void drop_zbuffer(const std::string& filename, const std::vector<double>& depth,
         }
     }
     if (maxz < minz) {
-        zimg.write_tga_file(filename, true, false);
-        return;
+        return zimg.write_tga_file(filename, true, false);
     }
     const double range = std::max(maxz - minz, 1e-12);
     for (int x = 0; x < width; x++) {
@@ -123,19 +228,17 @@ void drop_zbuffer(const std::string& filename, const std::vector<double>& depth,
             zimg.set(x, y, { value, value, value, 255 });
         }
     }
-    zimg.write_tga_file(filename, true, false);
+    return zimg.write_tga_file(filename, true, false);
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " obj/model.obj" << std::endl;
-        return 1;
+    RenderOptions options;
+    const int parse_result = parse_options(argc, argv, options);
+    if (parse_result != 1) {
+        print_usage(argv[0]);
+        return parse_result == 0 ? 0 : 1;
     }
 
-    constexpr int width = 800;
-    constexpr int height = 800;
-    constexpr int shadow_width = 2048;
-    constexpr int shadow_height = 2048;
     constexpr vec3 light_direction{ 1., 1., 1. }; // 从表面指向方向光
     constexpr vec3 eye{ -1., 0., 2. };
     constexpr vec3 center{ 0., 0., 0. };
@@ -144,9 +247,9 @@ int main(int argc, char** argv) {
     constexpr double fovy = 45. * pi / 180.;
 
     std::vector<Model> models;
-    models.reserve(argc - 1);
-    for (int i = 1; i < argc; ++i)
-        models.emplace_back(argv[i]);
+    models.reserve(options.model_paths.size());
+    for (const std::string& model_path : options.model_paths)
+        models.emplace_back(model_path);
 
     AABB scene_bounds;
     for (const Model& model : models)
@@ -158,8 +261,16 @@ int main(int argc, char** argv) {
     }
 
     ShadowMap shadow_map;
-    shadow_map.width = shadow_width;
-    shadow_map.height = shadow_height;
+    shadow_map.width = options.shadow_width;
+    shadow_map.height = options.shadow_height;
+
+    std::error_code output_error;
+    std::filesystem::create_directories(options.output_directory, output_error);
+    if (output_error) {
+        std::cerr << "Error: could not create output directory '" << options.output_directory
+                  << "': " << output_error.message() << '\n';
+        return 1;
+    }
 
     { // 方向光深度 pass
         const DirectionalLightFrustum light_frustum =
@@ -168,12 +279,12 @@ int main(int argc, char** argv) {
         Perspective = light_frustum.projection;
         shadow_map.light_clip_from_world = Perspective * ModelView;
         shadow_map.world_units_per_texel = std::max(
-            (light_frustum.right - light_frustum.left) / shadow_width,
-            (light_frustum.top - light_frustum.bottom) / shadow_height);
+            (light_frustum.right - light_frustum.left) / options.shadow_width,
+            (light_frustum.top - light_frustum.bottom) / options.shadow_height);
         shadow_map.depth_range = light_frustum.far_plane - light_frustum.near_plane;
-        init_viewport(0, 0, shadow_width, shadow_height);
-        init_zbuffer(shadow_width, shadow_height);
-        TGAImage depth_target(shadow_width, shadow_height, TGAImage::GRAYSCALE);
+        init_viewport(0, 0, options.shadow_width, options.shadow_height);
+        init_zbuffer(options.shadow_width, options.shadow_height);
+        TGAImage depth_target(options.shadow_width, options.shadow_height, TGAImage::GRAYSCALE);
 
         for (const Model& model : models) {
             BlankShader shader{ model };
@@ -185,18 +296,24 @@ int main(int argc, char** argv) {
             }
         }
         shadow_map.depth = zbuffer;
-        drop_zbuffer("shadowmap.tga", shadow_map.depth, shadow_width, shadow_height);
+        if (!drop_zbuffer((options.output_directory / "shadowmap.tga").string(), shadow_map.depth,
+                          options.shadow_width, options.shadow_height)) {
+            std::cerr << "Error: could not write shadow-map debug image\n";
+            return 1;
+        }
     }
 
     { // 相机颜色 pass，在片元着色阶段直接查询阴影
         lookat(eye, center, up);
-        init_perspective(fovy, width / static_cast<double>(height), .1, 100.);
-        init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8);
-        init_zbuffer(width, height);
-        TGAImage framebuffer(width, height, TGAImage::RGB, { 177, 195, 209, 255 });
+        init_perspective(fovy, options.width / static_cast<double>(options.height), .1, 100.);
+        init_viewport(options.width / 16, options.height / 16,
+                      options.width * 7 / 8, options.height * 7 / 8);
+        init_zbuffer(options.width, options.height);
+        TGAImage framebuffer(options.width, options.height, TGAImage::RGB, { 177, 195, 209, 255 });
 
         for (const Model& model : models) {
-            BlinnPhongShader shader(light_direction, model, shadow_map);
+            BlinnPhongShader shader(light_direction, model, shadow_map,
+                                    options.shadow_bias, options.shadow_pcf_radius);
             for (int face = 0; face < model.nfaces(); ++face) {
                 const Triangle triangle = { shader.vertex(face, 0),
                                             shader.vertex(face, 1),
@@ -204,8 +321,15 @@ int main(int argc, char** argv) {
                 rasterize(triangle, shader, framebuffer);
             }
         }
-        framebuffer.write_tga_file("framebuffer.tga", true, false);
-        drop_zbuffer("zbuffer.tga", zbuffer, width, height);
+        if (!framebuffer.write_tga_file((options.output_directory / "framebuffer.tga").string(), true, false)) {
+            std::cerr << "Error: could not write framebuffer image\n";
+            return 1;
+        }
+        if (!drop_zbuffer((options.output_directory / "zbuffer.tga").string(), zbuffer,
+                          options.width, options.height)) {
+            std::cerr << "Error: could not write z-buffer debug image\n";
+            return 1;
+        }
     }
 
     return 0;
